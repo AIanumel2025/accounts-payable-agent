@@ -17,6 +17,33 @@ dependencies = [
 dev = [
     "pytest>=8,<9",
 ]
+pdf = [
+    # PyMuPDF. Pinned to the version recorded in the notebook run
+    # (docs/modularisation_map.md §8.1); imported lazily by
+    # ap_agent.tools.preprocessing.render_pdf_pages.
+    "pymupdf==1.28.2",
+]
+preprocessing = [
+    "pymupdf==1.28.2",
+    # Versions unrecorded in the notebook (§8.1/R-06); pinned here to the
+    # versions verified during M4A (docs/m4_phase_2_preprocessing_report.md).
+    "numpy>=2,<3",
+    "opencv-python-headless>=4,<5",
+    "Pillow>=12,<13",
+]
+ocr-tesseract = [
+    # Requires the system `tesseract-ocr` binary (5.3.4 in the notebook
+    # run); imported lazily by ap_agent.adapters.tesseract_adapter.
+    "pytesseract>=0.3,<0.4",
+]
+ocr-paddle = [
+    # Pinned to the exact versions recorded in the notebook run
+    # (docs/modularisation_map.md §8.1); imported lazily by
+    # ap_agent.adapters.paddleocr_adapter. Downloads OCR models over the
+    # network on first engine construction (not at import time).
+    "paddlepaddle==3.3.1",
+    "paddleocr==3.7.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -25,8 +52,11 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
+    "unit: fast, dependency-isolated test",
+    "integration: exercises more than one module or a real fixture",
+    "slow: long-running test",
+    "ocr: exercises a real local OCR provider (Tesseract and/or PaddleOCR)",
     "requires_fixtures: needs the committed invoice fixtures",
     "requires_tesseract: needs a local Tesseract OCR installation",
     "requires_paddle: needs a local PaddleOCR/PaddlePaddle installation",
-    "slow: long-running test",
 ]

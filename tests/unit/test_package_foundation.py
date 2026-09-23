@@ -4,6 +4,7 @@ fixture/production separation required by decisions D-2 and D-3.
 
 import ast
 import importlib
+import re
 import sys
 from pathlib import Path
 
@@ -80,6 +81,38 @@ def test_m2_modules_do_not_import_heavy_optional_dependencies():
     assert not leaked, f"M2 contract modules pulled in heavy dependencies: {leaked}"
 
 
+# M4A/M4B processing modules: CLAUDE.md requires cv2/numpy/PIL/pymupdf and
+# the OCR provider libraries to be imported lazily, inside the functions
+# and adapters that need them, never as a side effect of importing the
+# module itself.
+PROCESSING_MODULES = [
+    "ap_agent.artifacts.filesystem",
+    "ap_agent.artifacts.serialization",
+    "ap_agent.tools.preprocessing",
+]
+
+
+@pytest.mark.parametrize("module_name", PROCESSING_MODULES)
+def test_processing_module_imports_successfully(module_name):
+    module = importlib.import_module(module_name)
+    assert module is not None
+
+
+def test_processing_modules_do_not_import_heavy_optional_dependencies_at_import_time():
+    before = set(sys.modules)
+    for module_name in PROCESSING_MODULES:
+        importlib.import_module(module_name)
+    after = set(sys.modules)
+    newly_imported = after - before
+
+    leaked = {
+        name
+        for name in newly_imported
+        if name.split(".")[0] in FORBIDDEN_RUNTIME_IMPORTS
+    }
+    assert not leaked, f"Processing modules pulled in heavy dependencies: {leaked}"
+
+
 def _iter_production_source_files():
     return sorted(SRC_ROOT.rglob("*.py"))
 
@@ -103,12 +136,24 @@ def test_no_production_module_contains_fixture_names_or_expected_values(forbidde
     )
 
 
+DOCUMENT_COUNT_PATTERN = re.compile(
+    r"\blen\([^)]*\)\s*==\s*[47]\b"
+)
+
+
 def test_no_production_module_hardcodes_a_document_count():
-    """D-2: runtime code must not assume there are exactly four documents."""
+    """D-2: runtime code must not assume there are exactly four documents.
+
+    Matches `len(...) == 4` / `len(...) == 7` shapes specifically, not any
+    occurrence of the substring "== 4" — `pixmap.n == 4` in
+    `tools/preprocessing.py` (verbatim from the notebook: a PDF pixmap's
+    RGBA channel count) is unrelated to document counting and must not be
+    flagged.
+    """
 
     offenders = []
     for path in _iter_production_source_files():
         source = path.read_text(encoding="utf-8")
-        if "== 4" in source or "len(test_results) == 7" in source:
+        if DOCUMENT_COUNT_PATTERN.search(source):
             offenders.append(str(path.relative_to(SRC_ROOT)))
     assert not offenders, f"found a hardcoded document count in: {offenders}"
