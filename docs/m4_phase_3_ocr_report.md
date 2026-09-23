@@ -11,9 +11,12 @@ committed fixtures and their manifest were not modified.
 (M2), `docs/m3_phase_1_ingestion_report.md` (M3),
 `docs/m4_phase_2_preprocessing_report.md` (M4A).
 
-**Blocker (must be read before the rest of this report):** the real
-PaddleOCR fixture run the task brief requires could not be executed in
-this milestone's environment. See §8.
+**Update (M4B resumed):** the network blocker described below has been
+**resolved**. This environment's network policy was updated to permit
+PaddleOCR model downloads, and the real-PaddleOCR parity run the task
+brief requires has now executed successfully against all four fixtures,
+matching every required semantic outcome. See §8 (resolution) and §8a
+(real-run results) for the full record; §9 has the updated test totals.
 
 ---
 
@@ -184,8 +187,9 @@ between, since `load_coordinate_aligned_evidence@48`, the diagnostic
 cropper, was correctly excluded per the modularisation map, §1.2 row 103).
 `test_extract_paddle_ocr_page_builds_a_succeeded_result` and
 `test_extract_paddle_preprocessed_image_*` cover this path with mocked
-Paddle results (no real evidence image can be produced end-to-end in this
-environment — §8).
+Paddle results; §8a additionally records independent, real-evidence-image
+verification (dimensions, token-bounds, coordinate-system consistency)
+for all four fixtures now that a real PaddleOCR engine is available.
 
 ## 6. Critical TOTAL-value completeness guard and persistence-order correction
 
@@ -274,75 +278,215 @@ No Phase 4/5 file was touched.
 | `paddlepaddle` | **3.3.1** | **3.3.1** | Exact match. Installs and imports correctly; lazy import inside `ap_agent.adapters.paddleocr_adapter`. |
 | `paddleocr` | **3.7.0** | **3.7.0** | Exact match. Installs and imports correctly. |
 
-**BLOCKER — the real PaddleOCR fixture run could not be executed.**
-`paddlepaddle==3.3.1` and `paddleocr==3.7.0` install cleanly from PyPI (an
-allowed host in this environment's network policy) and `PaddleOCR(...)`
-constructs as a Python object, but the moment it tries to load its first
-model it raises:
+**BLOCKER — RESOLVED.** In the original M4B pass, `paddlepaddle==3.3.1`
+and `paddleocr==3.7.0` installed cleanly from PyPI and `PaddleOCR(...)`
+constructed as a Python object, but the moment it tried to load its first
+model it raised `Exception: No available model hosting platforms
+detected. Please check your network connection.` — the environment's
+egress proxy denied every one of PaddleOCR's model-hosting platforms
+(`huggingface.co`, `aistudio.baidu.com`, `modelscope.cn`,
+`paddle-model-ecology.bj.bcebos.com`).
 
-```
-Exception: No available model hosting platforms detected. Please check your network connection.
-```
-
-`curl -sS http://127.0.0.1:38097/__agentproxy/status` confirms the egress
-proxy denied (`403`) every one of PaddleOCR's model-hosting platforms:
-`huggingface.co`, `aistudio.baidu.com`, `modelscope.cn`, and
-`paddle-model-ecology.bj.bcebos.com`. This is an environment network-policy
-restriction, not a code or packaging defect — the same restriction that
-already (correctly) blocks `ppa.launchpadcontent.net` for unrelated apt
-sources. Per the task brief ("If the cloud environment cannot install or
-execute PaddleOCR, do not replace the required real parity run with mocks
-and call M4 complete. Report the blocker."), this report does exactly
-that:
-
-- **Not done**: the real PaddleOCR run against the four fixtures, the
-  semantic-anchor validation in `tests/golden/phase_3_expected_results.json`,
-  and independent reproduction of the token counts/confidences/evidence-image
-  dimensions recorded in `docs/modularisation_map.md` §10.3.
-- **Done instead, and real**: every provider-routing, guard, persistence-order,
-  bridge, and fail-closed behaviour is exercised against the real, local
-  Tesseract engine (5.3.4, installed successfully, no network dependency)
-  running on the real fixture bytes end-to-end through Phase 1 → Phase 2 →
-  Phase 3, with the Paddle path forced to fail so the fallback route runs
-  for real (`tests/integration/test_phase_3_ocr.py::test_all_four_fixtures_run_end_to_end_on_the_tesseract_fallback_path`,
-  `tests/integration/test_phase_1_to_3_pipeline.py::test_phase_1_to_3_pipeline_integrity_on_all_four_fixtures`).
-  Every PaddleOCR *adapter* function (result-payload extraction, confidence
-  normalization, bbox conversion, evidence construction) is unit-tested
-  against mocked PaddleOCR prediction objects, which exercises the same
-  code paths the real engine's output would flow through.
-- **Not faked**: no test asserts a PaddleOCR-specific semantic outcome
-  (the four documents' anchors, `paddleocr` as the page's actual selected
-  provider on real fixture bytes) using a mock standing in for the engine.
-  The two tests that need a real engine
-  (`test_real_paddleocr_run_matches_the_semantic_golden_baseline`,
-  `test_real_paddleocr_uses_paddle_on_every_fixture_page`,
-  `test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline`)
-  build a real `PaddleOCR` engine via `create_engine()` in a fixture and
-  call `pytest.skip(...)` with the exact underlying exception when that
-  fails — they are real tests that will run and enforce the golden
-  baseline the moment this environment's network policy allows one of the
-  four model-hosting hosts, not tests replaced by mocks.
-
-**To unblock**: add one of `huggingface.co`, `aistudio.baidu.com`,
-`modelscope.cn`, or `paddle-model-ecology.bj.bcebos.com` to this
-environment's allowed network domains (environment settings → Network
-access → Edit), then re-run
-`pytest -m requires_paddle tests/integration/test_phase_3_ocr.py tests/integration/test_phase_1_to_3_pipeline.py -v`.
+This milestone was resumed after the environment's network policy was
+updated to permit PaddleOCR model downloads. Engine construction
+(`ap_agent.adapters.paddleocr_adapter.create_engine(PaddleEngineOptions())`)
+now succeeds, and the required real-PaddleOCR fixture run has been
+executed and verified. §8a below records the resolution and the results
+in full; §9 has the updated test totals (**317 passed, 0 skipped, 0
+failed** — no test requiring the real PaddleOCR engine remains skipped).
 
 No model weights, downloaded fonts, caches or virtual environments are
-committed (`.venv/`, PaddleX's model cache directory, and pip's download
-cache are all outside the repository and gitignored).
+committed (`.venv/`, PaddleX's model cache directory at
+`/root/.paddlex/official_models/`, and pip's download cache are all
+outside the repository and gitignored; a Python virtual environment at
+`/home/user/.venv-ap`, outside the repository, was used to install the
+`dev,pdf,preprocessing,ocr-tesseract,ocr-paddle` extras for this run).
+
+## 8a. Real PaddleOCR parity run (resolution record)
+
+### Environment and dependency versions actually used
+
+| Component | Version | Notes |
+|---|---|---|
+| Python | 3.11.15 | |
+| `paddlepaddle` | 3.3.1 | exact match to §8's pin |
+| `paddleocr` | 3.7.0 | exact match to §8's pin |
+| `numpy` | 2.3.5 | |
+| `opencv-python-headless` (installed) | 4.14.0.94 | satisfies the project's `>=4,<5` extra |
+| `opencv-contrib-python` (pulled in transitively by `paddleocr`/`paddlex`, shadows `cv2`) | 4.10.0.84 | `import cv2; cv2.__version__` resolves to **4.10.0** — the module actually imported at runtime is `opencv-contrib-python`, not the project's own `opencv-python-headless` pin; both satisfy `opencv-python-headless>=4,<5` on version number, and no code in `src/` depends on a feature unique to either package, so this is recorded as an environment observation, not a defect |
+| `pymupdf` | 1.28.2 | exact match to the notebook-recorded version |
+| `Pillow` | 12.3.0 | |
+| `pytesseract` | 0.3.13 | |
+| System `tesseract-ocr` binary | **5.3.4** (`tesseract 5.3.4`, leptonica-1.82.0) | installed via `apt-get install tesseract-ocr tesseract-ocr-eng`; exact match to the notebook-recorded version |
+
+### Model-download source and identifiers
+
+`create_engine(PaddleEngineOptions())` (defaults: `use_doc_orientation_classify=False`,
+`use_doc_unwarping=True`, `use_textline_orientation=True`) downloads four
+official PaddleX models on first construction, saved under
+`/root/.paddlex/official_models/`:
+
+| Model identifier | Purpose | Size | Primary source | Fallback source (actually used) |
+|---|---|---|---:|---|---|
+| `UVDoc` | document unwarping (`use_doc_unwarping=True`) | 31 MB | huggingface.co | — (huggingface.co succeeded) |
+| `PP-LCNet_x1_0_textline_ori` | textline orientation (`use_textline_orientation=True`) | 6.6 MB | huggingface.co | — (huggingface.co succeeded) |
+| `PP-OCRv6_medium_det` | text detection | 60 MB | huggingface.co | — (huggingface.co succeeded) |
+| `PP-OCRv6_medium_rec` | text recognition | 74 MB | huggingface.co (attempted) | **modelscope** — huggingface.co's CAS/xet content store returned a transient `File reconstruction error` for this one model's largest asset (`inference.pdiparams`) after fetching most of it; PaddleX's own built-in multi-source fallback (`aistudio` → `huggingface` → `bos` → `modelscope`) then re-fetched the same 5 files from `modelscope.cn` (`PaddlePaddle/PP-OCRv6_medium_rec@master`) and succeeded |
+
+Total one-time download: ~172 MB, ~739 s on first construction (engine
+building/import + download); subsequent `create_engine()` calls in this
+session used the on-disk cache and completed without any network
+download. All four model identifiers are the ones the notebook's cell 44
+active configuration selects by default — no fixture-specific or
+environment-specific model override was introduced.
+
+### Real PaddleOCR outcome per fixture (task §3)
+
+| Fixture | Status | Provider | Tokens | Mean confidence | Required anchors captured | Required outcome met |
+|---|---|---|---:|---:|---|---|
+| `Template1_Instance90.jpg` | **SUCCEEDED** | `paddleocr` | 49 | 99.54 | `TAX INVOICE` ✓, `873.58` ✓ | ✓ |
+| `08181_flat_document.png` | **SUCCEEDED** | `paddleocr` | 52 | 99.74 | `308044` ✓, `69.22` ✓ | ✓ |
+| `invoice_Aaron Bergman_36258.pdf` | **SUCCEEDED** | `paddleocr` | 35 | 99.77 | `36258` ✓, `50.10` ✓ | ✓ |
+| `08181_warped_document_perspective_shadow.jpg` | **REVIEW_REQUIRED** | `paddleocr` | 52 | 99.70 | `308044` ✓; `69.22` confirmed **absent** from OCR evidence (never inferred); `CRITICAL_TOTAL_VALUE_MISSING` present **exactly once** | ✓ |
+
+Diagnostic-reference comparison against `docs/modularisation_map.md`
+§10.3 / the golden file's carried-over diagnostic values: token counts
+match exactly (49/52/35/52); mean confidences differ by ≤0.11 points
+(e.g. 99.74 vs. 99.81 diagnostic reference for the flat document) — a
+small, expected confidence difference across environments/runs, not a
+semantic difference, and is documented here rather than used to change
+any golden expectation. The warped document's evidence-image dimensions
+(6360×2399) reproduce the diagnostic reference exactly.
+
+### Provider-routing totals (task aggregate requirements)
+
+| Metric | Required | Actual |
+|---|---:|---:|
+| Documents processed | 4 | 4 |
+| Pages processed | 4 | 4 |
+| PaddleOCR pages | 4 | 4 |
+| Tesseract fallback pages | 0 | 0 |
+| Successful documents | 3 | 3 |
+| Review-required documents | 1 | 1 |
+| Failed production documents | 0 | 0 |
+| Semantic anchors captured | 7 of 8 | 7 of 8 |
+| Missing anchor safely contained | yes | yes (`08181_warped_document_perspective_shadow.jpg`, `REVIEW_REQUIRED` + `CRITICAL_TOTAL_VALUE_MISSING`) |
+
+### TOTAL completeness-guard outcome
+
+`apply_total_completeness_guard` fired on exactly one page
+(`08181_warped_document_perspective_shadow.jpg`): `CRITICAL_TOTAL_VALUE_MISSING`
+appears exactly once in that page's `review_reasons`, the page and
+document/event statuses were all forced to `REVIEW_REQUIRED`, and no
+monetary value was inferred or written anywhere in the OCR evidence — the
+missing `69.22` grand-total value is confirmed absent from
+`page_text` by direct inspection of the real OCR output, not merely by
+the guard's own bookkeeping. The other three fixtures triggered no guard
+action.
+
+### Evidence-coordinate validation
+
+For every one of the four real-PaddleOCR pages: every token's bounding
+box (as validated by `validate_bounding_box` at construction time, and
+independently re-checked here by opening the persisted evidence PNG and
+comparing pixel dimensions against every token's `bounding_box.right`/
+`bounding_box.bottom`) falls within the official evidence image's actual
+pixel dimensions — `Template1_Instance90.jpg`: evidence 1785×866, max
+token extent 572×830; `08181_flat_document.png`: evidence 5100×2225, max
+token extent 1660×1860; `invoice_Aaron Bergman_36258.pdf`: evidence
+7650×3325, max token extent 2550×2276; `08181_warped_document_perspective_shadow.jpg`:
+evidence 6360×2399, max token extent 2027×1822. The evidence image opened
+for each check is the same file (`evidence_image.png`, by path and
+SHA-256) that `OCRPageResult.evidence_image_sha256` records, confirming
+tokens and evidence image share one coordinate system. No diagnostic
+multi-panel visualization exists anywhere in `src/ap_agent/` (`grep -rn
+"matplotlib" src/ap_agent/` returns no matches) and none was selected as
+evidence for any fixture.
+
+### Persisted/in-memory parity result
+
+For all four fixtures: `ocr_document_result.json`'s `status`,
+`ocr_event.json`'s `status` and `review_required`, and every page's
+`ocr_page_result.json` `status`/`review_reasons` were read back from disk
+and compared field-by-field against the in-memory `OCRDocumentResult`
+`process_ocr_document` returned — **all matched, for all four fixtures,
+including the warped invoice.** The warped invoice's persisted result is
+`REVIEW_REQUIRED` (not the stale pre-guard `SUCCEEDED` that the
+unmodified notebook would have written — R-04, corrected per §6.2), and
+this is now demonstrated with the real PaddleOCR provider, not only the
+forced-Tesseract path checked in the original M4B pass. Evidence
+isolation was independently re-verified: no other fixture's document ID
+string appears anywhere under any fixture's own Phase 3 artifact
+directory.
+
+### Phase 1 → Phase 2 → Phase 3 integration result (real PaddleOCR, not forced Tesseract)
+
+`tests/integration/test_phase_1_to_3_pipeline.py::test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline`
+was extended in this resumption to run the same integrity checks the
+Tesseract-forced test already ran
+(`_assert_pipeline_integrity`, shared by both tests) — with PaddleOCR as
+the primary provider for all four fixtures, end to end through ingestion
+→ preprocessing → OCR:
+
+- SHA-256 continuity across all three phase boundaries: verified for all
+  four fixtures.
+- Batch ID and document ID stable and identical across Phase 1, Phase 2
+  and Phase 3 results: verified for all four fixtures.
+- Every Phase 2 page correctly associated with its document directory;
+  every Phase 3 page input consumes the exact Phase 2 artifact path and
+  hash it was built from: verified.
+- No cross-document evidence leakage (no other fixture's document ID
+  string appears in any fixture's artifact tree): verified.
+- Persisted/in-memory agreement (document, event, and every page):
+  verified.
+- Final status for every fixture matches
+  `tests/golden/phase_3_expected_results.json`: verified (see table
+  above).
+
+This test (`pytest.mark.requires_paddle`) passed on this run.
 
 ## 9. Tests and results
+
+**Updated (M4B resumed, real PaddleOCR now available):**
+
+```
+$ python -m pytest -m requires_paddle -vv
+3 passed, 314 deselected in 555.63s (0:09:15)
+
+$ python -m pytest -vv
+317 passed, 0 skipped, 0 failed in 639.74s (0:10:39)
+```
+
+No test requiring the real PaddleOCR engine remains skipped. The three
+`requires_paddle`-marked tests
+(`tests/integration/test_phase_3_ocr.py::test_real_paddleocr_run_matches_the_semantic_golden_baseline`,
+`tests/integration/test_phase_3_ocr.py::test_real_paddleocr_uses_paddle_on_every_fixture_page`,
+`tests/integration/test_phase_1_to_3_pipeline.py::test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline`)
+built a real `PaddleOCR` engine via `create_engine()` and ran against real
+fixture bytes with no mocking, no Tesseract-fallback forcing, and no
+weakened/xfail'd assertions — see §8a for the full result breakdown.
+`python -m compileall -q src/ap_agent` succeeds.
+
+Test count: **317** (314 unconditional + 3 `requires_paddle`), unchanged
+from the original M4B pass's total of 317 (314 passed + 3 skipped) — the
+only change in this resumption is that the pre-existing
+`test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline`
+was extended in place (not duplicated) to also run the shared
+`_assert_pipeline_integrity` helper against the real-Paddle records, so
+no new test function was added and the total stays at 317.
+
+<details>
+<summary>Original M4B pass result (superseded, kept for history)</summary>
 
 ```
 $ python3 -m pytest -q
 314 passed, 3 skipped in ~66s
 ```
 
-The 3 skips are exactly the three real-PaddleOCR tests named in §8 —
-every other test, including every fixture-based OCR integration test,
-passes for real. `python3 -m compileall -q src/ap_agent` succeeds.
+The 3 skips were exactly the three real-PaddleOCR tests named in the
+original §8 — every other test, including every fixture-based OCR
+integration test, passed for real. `python3 -m compileall -q src/ap_agent`
+succeeded.
 
 Breakdown of new tests: 21 (`test_ocr_evidence.py`) + 12
 (`test_tesseract_adapter.py`) + 28 (`test_paddleocr_adapter.py`) + 31
@@ -350,7 +494,9 @@ Breakdown of new tests: 21 (`test_ocr_evidence.py`) + 12
 skipped) + 2 (`test_phase_1_to_3_pipeline.py`, 1 passed + 1 skipped) + 4
 new parametrized cases in `test_package_foundation.py` (the
 `PROCESSING_MODULES` list grew from 3 to 7 modules) = **103 new tests**
-(99 passing unconditionally + 4 that require a real PaddleOCR engine).
+(99 passing unconditionally + 4 that required a real PaddleOCR engine).
+
+</details>
 
 Coverage against the task's M4B test list (§9):
 
@@ -417,10 +563,10 @@ Coverage against the task's M4B test list (§9):
   `test_page_has_total_without_value_picks_the_lowest_total_as_grand_total`.
 - **Missing-total non-inference** —
   `test_apply_total_completeness_guard_never_inserts_a_money_value`, and
-  the real-fixture golden test's `expected_anchors_absent` assertion (`69.22`
-  must never appear in the warped invoice's OCR evidence) — this specific
-  assertion is one of the three currently skipped pending PaddleOCR
-  network access (§8).
+  the real-fixture golden test's `expected_anchors_absent` assertion
+  (`69.22` must never appear in the warped invoice's OCR evidence) — this
+  assertion now runs for real against the real PaddleOCR engine and
+  passes (§8a).
 - **Final-result persistence after the guard** — §6.2 above;
   `test_process_ocr_document_persists_the_guarded_result_not_the_pre_guard_one`
   is the direct test (a page that "succeeds" at the provider level but
@@ -432,10 +578,12 @@ Coverage against the task's M4B test list (§9):
   check in `test_phase_1_to_3_pipeline_integrity_on_all_four_fixtures`.
 - **Idempotent rerun** — `test_process_ocr_document_rerun_is_idempotent`.
 
-Real PaddleOCR integration run: **blocked** (§8) — the 3 skips are exactly
-this, each with an explicit reason. A real, network-free OCR run on all
-four fixtures via forced Tesseract fallback was performed instead, per
-above, and passes.
+Real PaddleOCR integration run: **executed and passing** (§8a) — all
+three `requires_paddle` tests run for real against the real PaddleOCR
+engine on real fixture bytes, with no mocking and no forced Tesseract
+fallback, and match the semantic golden baseline. The network-free OCR
+run on all four fixtures via forced Tesseract fallback (§4, §6) continues
+to pass as well and remains part of the suite.
 
 ## 10. Deviations from notebook behaviour
 
@@ -463,32 +611,52 @@ are extracted verbatim from cells 36, 38, 41, 43, 44 and 47.
 
 ## 11. Unresolved risks / open items
 
-- **The PaddleOCR network blocker (§8) is the one open item that blocks
-  full parity sign-off.** Everything else in this milestone is complete
-  and tested for real.
-- **R-06 (inherited)**: even once network access is available, exact
-  (Tier X) token counts/confidences/evidence-image byte hashes remain
-  environment-pinned; this milestone's golden file already records the
-  task brief's semantic expectations as the enforced assertions and the
-  notebook's own recorded token counts/confidences as diagnostic-only
-  reference values, per the task brief's own instruction on this point.
-- **R-02, R-04 (inherited, R-04 now resolved in `src/`)**: R-04 (stale
-  Phase 3 OCR artifact status) is fixed in this module (§6.2); the
-  notebook itself is unmodified and still carries the original defect,
-  as required (the notebook is read-only source of truth, never "fixed").
+- **The PaddleOCR network blocker (§8) is now resolved** — see §8a for
+  the full real-run record. No remaining item blocks parity sign-off for
+  M4B's own scope.
+- **R-06 (inherited, now partially addressed)**: exact (Tier X) token
+  counts reproduced exactly against the diagnostic reference (49/52/35/52);
+  mean confidences differ by ≤0.11 points from the diagnostic reference
+  values, which is expected run-to-run/engine-build variance and is
+  documented in §8a rather than used to change any golden expectation.
+  Evidence-image byte hashes remain environment-pinned (not compared
+  byte-for-byte against the notebook's own run) — the golden file's
+  enforced assertions are the semantic fields (status, provider, anchor
+  presence/absence, guard reason), per the task brief's own instruction
+  on this point, and all of them now pass against the real engine.
+- **R-02, R-04 (inherited, R-04 resolved in `src/`)**: R-04 (stale
+  Phase 3 OCR artifact status) is fixed in this module (§6.2) and is now
+  demonstrated with the real PaddleOCR provider, not only the forced-
+  Tesseract path (§8a, persisted/in-memory parity). The notebook itself
+  remains unmodified and still carries the original defect, as required
+  (the notebook is read-only source of truth, never "fixed").
+- **Minor, non-blocking environment observation**: `opencv-contrib-python`
+  (a transitive dependency of `paddleocr`/`paddlex`) shadows the
+  project's own pinned `opencv-python-headless` in `import cv2` version
+  resolution in this environment (§8a dependency table). Both satisfy the
+  project's `>=4,<5` constraint and no code in `src/` depends on a
+  feature unique to either package; recorded for completeness, not acted
+  on.
 
 ## 12. Readiness assessment
 
-**M4B's code, unit tests and network-free integration tests are complete
-and green (314 passed, 3 skipped for a documented, external reason).** The
-task-required real PaddleOCR parity run against the four fixtures could
-not be executed in this environment and is not being claimed as done —
-see §8 for exactly what is blocked and how to unblock it. Combined M4
-(M4A + M4B) is **not** safe to declare fully parity-verified until that
-run completes; it is safe to merge as a well-tested, correct extraction
-with one clearly documented, externally-caused gap, at the reviewer's
-discretion. Phase 4 (normalisation) modularisation may begin in parallel:
-it depends on Phase 3's *contracts* (`OCRDocumentResult`, already
-extracted since M2) and the corrected persistence-order behaviour (§6.2,
-already implemented here), not on a specific PaddleOCR run's output
-values.
+**M4B is now complete, including the real-PaddleOCR parity run.** Full
+suite: **317 passed, 0 skipped, 0 failed** (§9). All three
+`requires_paddle` tests pass against a real, network-initialized
+PaddleOCR engine on real fixture bytes, with no mocking, no forced
+Tesseract fallback, and no weakened assertions. Every task-required
+semantic outcome (§8a) — per-fixture status/provider/anchors, the TOTAL
+completeness guard firing exactly once and containing the one missing
+anchor via `REVIEW_REQUIRED` rather than inferring it, evidence-coordinate
+validity, persisted/in-memory parity (including the previously-only-
+Tesseract-verified warped-invoice case), and the full Phase 1 → Phase 2 →
+Phase 3 integration with PaddleOCR as the primary provider — is
+reproduced and verified.
+
+**Real PaddleOCR parity is now demonstrated.** Combined M4 (M4A + M4B) has
+no remaining open blocker from this milestone's own scope.
+[PR #4](https://github.com/AIanumel2025/accounts-payable-agent/pull/4) is,
+on these results, **ready to merge** from a correctness/testing
+standpoint; per this task's explicit instructions this session does not
+merge it, and Phase 4 (normalisation) modularisation is intentionally not
+started here — both remain for a subsequent, separately-scoped session.

@@ -11,10 +11,13 @@ Verifies:
   - every Phase 2 page belongs to the correct document;
   - every Phase 3 page consumes the correct Phase 2 artifact;
   - no evidence crosses document boundaries;
-  - final statuses match the expected semantic results (real-PaddleOCR
-    path only; skipped in this environment — see
-    docs/m4_phase_3_ocr_report.md for the documented network blocker);
+  - final statuses match the expected semantic results;
   - persisted and in-memory Phase 3 results agree.
+
+These checks run twice: once with the Tesseract fallback forced (network-
+free, always runs), and once with PaddleOCR as the primary provider (marked
+`requires_paddle`; skipped only when the environment cannot reach a model-
+hosting platform — see docs/m4_phase_3_ocr_report.md).
 """
 
 from __future__ import annotations
@@ -92,19 +95,10 @@ def _run_full_pipeline(tmp_path, engine, engine_version):
     return batch_id, records, preprocessing_config, ocr_config
 
 
-@pytest.mark.integration
-@pytest.mark.requires_fixtures
-@pytest.mark.ocr
-@pytest.mark.slow
-def test_phase_1_to_3_pipeline_integrity_on_all_four_fixtures(tmp_path):
-    """Network-free integrity checks (SHA-256 continuity, ID stability,
-    page/document association, evidence isolation, persisted/in-memory
-    agreement), run with the Tesseract fallback forced so this test does
-    not depend on PaddleOCR's model download."""
-
-    batch_id, records, preprocessing_config, ocr_config = _run_full_pipeline(
-        tmp_path, engine=_NeverAvailablePaddleEngine(), engine_version="0.0-disabled"
-    )
+def _assert_pipeline_integrity(batch_id, records, preprocessing_config, ocr_config):
+    """SHA-256 continuity, ID stability, page/document association,
+    evidence isolation, and persisted/in-memory agreement — checked the
+    same way regardless of which OCR provider produced `records`."""
 
     assert len(records) == 4
 
@@ -187,14 +181,34 @@ def test_phase_1_to_3_pipeline_integrity_on_all_four_fixtures(tmp_path):
 
 @pytest.mark.integration
 @pytest.mark.requires_fixtures
+@pytest.mark.ocr
+@pytest.mark.slow
+def test_phase_1_to_3_pipeline_integrity_on_all_four_fixtures(tmp_path):
+    """Network-free integrity checks (SHA-256 continuity, ID stability,
+    page/document association, evidence isolation, persisted/in-memory
+    agreement), run with the Tesseract fallback forced so this test does
+    not depend on PaddleOCR's model download."""
+
+    batch_id, records, preprocessing_config, ocr_config = _run_full_pipeline(
+        tmp_path, engine=_NeverAvailablePaddleEngine(), engine_version="0.0-disabled"
+    )
+    _assert_pipeline_integrity(batch_id, records, preprocessing_config, ocr_config)
+
+
+@pytest.mark.integration
+@pytest.mark.requires_fixtures
 @pytest.mark.requires_paddle
 @pytest.mark.slow
 def test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline(tmp_path):
     """The task-required semantic check: final statuses after the full
     Phase 1 -> Phase 2 -> Phase 3 pipeline must match
-    tests/golden/phase_3_expected_results.json. Requires a real PaddleOCR
-    engine; skipped when the environment cannot reach a model-hosting
-    platform (documented blocker, docs/m4_phase_3_ocr_report.md)."""
+    tests/golden/phase_3_expected_results.json, and the same SHA-256
+    continuity / ID stability / evidence isolation / persisted-in-memory
+    agreement checks as the Tesseract-forced integrity test must hold with
+    PaddleOCR as the primary provider (not the forced Tesseract path).
+    Requires a real PaddleOCR engine; skipped when the environment cannot
+    reach a model-hosting platform (documented blocker,
+    docs/m4_phase_3_ocr_report.md)."""
 
     from ap_agent.adapters.paddleocr_adapter import create_engine, get_paddleocr_version
 
@@ -209,8 +223,12 @@ def test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline
     golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
     engine_version = get_paddleocr_version()
 
-    _, records, _, _ = _run_full_pipeline(tmp_path, engine=engine, engine_version=engine_version)
+    batch_id, records, preprocessing_config, ocr_config = _run_full_pipeline(
+        tmp_path, engine=engine, engine_version=engine_version
+    )
 
     for expected in golden["documents"]:
         ocr_result = records[expected["filename"]]["ocr_result"]
         assert ocr_result.status.value == expected["expected_status"]
+
+    _assert_pipeline_integrity(batch_id, records, preprocessing_config, ocr_config)
