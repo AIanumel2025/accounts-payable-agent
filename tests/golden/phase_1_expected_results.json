@@ -1,0 +1,84 @@
+{
+  "golden_baseline_version": "1.0",
+  "source": "notebooks/accounts_payable_pipeline.ipynb (cells 10, 12, 14; validated Phase 1 entry point ingest_document; cross-checked against docs/modularisation_map.md \u00a71.4 and \u00a710.1)",
+  "purpose": "Phase 1 ingestion parity baseline for the four controlled fixtures declared in tests/fixtures/invoices/manifest.json.",
+  "notes": [
+    "Values were produced by calling the extracted ap_agent.tools.ingestion functions against the committed fixture bytes and cross-checked against the batch and document IDs recorded in docs/modularisation_map.md \u00a710.1 (all four document IDs and the batch ID match exactly).",
+    "Phase 1's IngestionResult carries no review flag: review routing begins in Phase 4/5, so 'expected review flag' is not established at this phase and is intentionally omitted rather than guessed.",
+    "expected_document_status is always PENDING for a freshly ingested document: Phase 1 only registers identity and preserves bytes, it does not advance document.status (that happens in later phases).",
+    "expected_disposition is ACCEPTED for all four documents because the four fixtures are byte-distinct; DUPLICATE is only observed when a renamed byte-identical copy is ingested afterwards in the same known_sha256_values set (see duplicate_policy below). Renamed duplicate copies are not committed as fixtures (CLAUDE.md); tests must create them dynamically in tmp_path."
+  ],
+  "batch": {
+    "source": "phase_1_colab_test",
+    "external_reference": "phase-1-seven-file-validation",
+    "formula": "uuid5(BATCH_NAMESPACE, f'{source.strip().lower()}:{external_reference.strip().lower()}')",
+    "expected_batch_id": "bbf21ffd-b3e9-5086-b331-15b2138b74a3"
+  },
+  "documents": [
+    {
+      "filename": "08181_flat_document.png",
+      "sha256": "4d8b79e7843f7acb42947da9ef7e2bb7d0989943ceffb7035257edfcbc156083",
+      "media_type": "image/png",
+      "file_size_bytes": 185412,
+      "expected_content_id": "f9baaea4-7284-532f-8d9d-fd807e42027b",
+      "expected_document_id": "765ed1ee-aa8a-5de0-9342-94fbd87607f6",
+      "expected_disposition": "ACCEPTED",
+      "expected_event_status": "SUCCEEDED",
+      "expected_document_status": "PENDING",
+      "expected_original_preserved": true,
+      "expected_error_codes": [],
+      "expected_artifact_relative_path": "originals/f9baaea4-7284-532f-8d9d-fd807e42027b/original.png"
+    },
+    {
+      "filename": "08181_warped_document_perspective_shadow.jpg",
+      "sha256": "9e6a3234447f2898c47db7d8de280933cb9081f822dae7858bb492b7c2a53b69",
+      "media_type": "image/jpeg",
+      "file_size_bytes": 419891,
+      "expected_content_id": "1132fab0-8d3a-5858-a8bf-344b3aa646c0",
+      "expected_document_id": "df6c0b65-80fd-548e-a8f6-9f221eceea3a",
+      "expected_disposition": "ACCEPTED",
+      "expected_event_status": "SUCCEEDED",
+      "expected_document_status": "PENDING",
+      "expected_original_preserved": true,
+      "expected_error_codes": [],
+      "expected_artifact_relative_path": "originals/1132fab0-8d3a-5858-a8bf-344b3aa646c0/original.jpg"
+    },
+    {
+      "filename": "Template1_Instance90.jpg",
+      "sha256": "7df0650a9eb3a4370b8236ba283195eee4bdf7bc7e884e5f4c03a7b4d997dcff",
+      "media_type": "image/jpeg",
+      "file_size_bytes": 55284,
+      "expected_content_id": "736dd20b-a454-557f-8173-8ff64ff3e371",
+      "expected_document_id": "1c727b75-2308-5261-8805-fadca85aba7d",
+      "expected_disposition": "ACCEPTED",
+      "expected_event_status": "SUCCEEDED",
+      "expected_document_status": "PENDING",
+      "expected_original_preserved": true,
+      "expected_error_codes": [],
+      "expected_artifact_relative_path": "originals/736dd20b-a454-557f-8173-8ff64ff3e371/original.jpg"
+    },
+    {
+      "filename": "invoice_Aaron Bergman_36258.pdf",
+      "sha256": "2e8206cd45c73701246757a641013aac483b4d58a9ee7ac3695c6f4b167c0101",
+      "media_type": "application/pdf",
+      "file_size_bytes": 15813,
+      "expected_content_id": "76c791d0-ca8d-5a83-8244-03e70d8b4b59",
+      "expected_document_id": "651ee283-bb83-58c3-9215-285c8e6ac801",
+      "expected_disposition": "ACCEPTED",
+      "expected_event_status": "SUCCEEDED",
+      "expected_document_status": "PENDING",
+      "expected_original_preserved": true,
+      "expected_error_codes": [],
+      "expected_artifact_relative_path": "originals/76c791d0-ca8d-5a83-8244-03e70d8b4b59/original.pdf"
+    }
+  ],
+  "duplicate_policy": {
+    "description": "A renamed, byte-identical copy of an already-ingested fixture, submitted with the original's SHA-256 present in known_sha256_values, is DUPLICATE/SKIPPED and reuses the original's identity and stored artifact.",
+    "expected_disposition": "DUPLICATE",
+    "expected_event_status": "SKIPPED",
+    "expected_original_preserved": false,
+    "expected_content_id_matches_original": true,
+    "expected_document_id_matches_original": true,
+    "expected_stored_path_matches_original": true
+  }
+}
