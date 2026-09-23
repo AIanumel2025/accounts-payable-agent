@@ -36,6 +36,7 @@ __all__ = [
     "IngestionConfig",
     "PreprocessingConfig",
     "OCRConfig",
+    "PaddleEngineOptions",
     "NormalizationConfig",
     "FinancialValidationConfig",
 ]
@@ -108,6 +109,35 @@ class OCRConfig:
     @property
     def tesseract_config_string(self) -> str:
         return f"--oem {self.engine_mode} --psm {self.page_segmentation_mode}"
+
+
+@dataclass(frozen=True)
+class PaddleEngineOptions:
+    """PaddleOCR engine construction options.
+
+    Source: notebook cell 44 ("PHASE 3 — RUNTIME COMPATIBILITY CORRECTION"),
+    the final, active engine configuration — not cell 40's superseded
+    construction (§1.3 of the modularisation map: the cell-40 instance is
+    SUPERSEDED; the cell-44 instance, which additionally disables
+    oneDNN/MKL-DNN and HPI and sets `cpu_threads=4` as a workaround for a
+    PaddlePaddle inference regression, is ACTIVE).
+
+    This dataclass and the adapter factory that consumes it
+    (`ap_agent.adapters.paddleocr_adapter.create_engine`) did not exist in
+    the notebook as named objects; they exist so the engine is built
+    explicitly, once, by the caller, instead of at import time from a
+    hidden global (`docs/modularisation_map.md` §5.1: "injected engine
+    created by an adapter factory; options in config/settings.py").
+    """
+
+    language: str = "en"
+    device: str = "cpu"
+    use_doc_orientation_classify: bool = False
+    use_doc_unwarping: bool = True
+    use_textline_orientation: bool = True
+    enable_mkldnn: bool = False
+    enable_hpi: bool = False
+    cpu_threads: int = 4
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,83 @@
+{
+  "golden_baseline_version": "1.0",
+  "source": "Task brief for M4B (semantic expected results, verbatim) cross-checked against notebooks/accounts_payable_pipeline.ipynb cells 34, 36, 38, 40, 41, 43, 44, 47 and docs/modularisation_map.md §10.3.",
+  "purpose": "Phase 3 OCR parity baseline for the four controlled fixtures declared in tests/fixtures/invoices/manifest.json, run through Phase 1 -> Phase 2 -> Phase 3 with PaddleOCR as the primary provider.",
+  "environment_note": "BLOCKED: this milestone's CI/sandbox environment denies outbound access to every PaddleOCR model-hosting platform (huggingface.co, aistudio.baidu.com, modelscope.cn, paddle-model-ecology.bj.bcebos.com; all returned 403 at the egress proxy). paddlepaddle==3.3.1 and paddleocr==3.7.0 install correctly from PyPI and construct a Python object, but PaddleOCR() raises 'No available model hosting platforms detected' the moment it tries to load its first model, before any fixture is processed. The real PaddleOCR run this file's values describe could not be executed or independently re-verified in this environment; it must be run once network access to one of those hosts is granted (docs/m4_phase_3_ocr_report.md documents this as an unresolved blocker, not a silently-skipped requirement). The token counts, confidences and evidence-image dimensions below are carried over as diagnostic reference values from the task brief and the modularisation map's own notebook-recorded run, not independently reproduced here; the semantic fields (status, provider, anchor presence/absence, guard reason) are the ones this milestone's tests enforce and are also unverified against a live Paddle run for the same reason.",
+  "config": {
+    "note": "phase_3_paddle_config (notebook cell 43): OCRConfig with ocr_engine_name='paddleocr', ocr_version='ocr-v2-paddle', every other field at its dataclass default. Engine options: PaddleEngineOptions dataclass defaults (notebook cell 44: lang=en, device=cpu, use_doc_orientation_classify=False, use_doc_unwarping=True, use_textline_orientation=True, enable_mkldnn=False, enable_hpi=False, cpu_threads=4).",
+    "ocr_engine_name": "paddleocr",
+    "ocr_version": "ocr-v2-paddle"
+  },
+  "documents": [
+    {
+      "filename": "Template1_Instance90.jpg",
+      "expected_status": "SUCCEEDED",
+      "expected_selected_provider": "paddleocr",
+      "expected_fallback_used": false,
+      "expected_anchors_captured": ["TAXINVOICE", "873.58"],
+      "expected_anchors_absent": [],
+      "expected_critical_total_value_missing": false,
+      "diagnostic_reference_token_count": 49,
+      "diagnostic_reference_mean_confidence": 99.59
+    },
+    {
+      "filename": "08181_flat_document.png",
+      "expected_status": "SUCCEEDED",
+      "expected_selected_provider": "paddleocr",
+      "expected_fallback_used": false,
+      "expected_anchors_captured": ["308044", "69.22"],
+      "expected_anchors_absent": [],
+      "expected_critical_total_value_missing": false,
+      "diagnostic_reference_token_count": 52,
+      "diagnostic_reference_mean_confidence": 99.81
+    },
+    {
+      "filename": "invoice_Aaron Bergman_36258.pdf",
+      "expected_status": "SUCCEEDED",
+      "expected_selected_provider": "paddleocr",
+      "expected_fallback_used": false,
+      "expected_anchors_captured": ["36258", "50.10"],
+      "expected_anchors_absent": [],
+      "expected_critical_total_value_missing": false,
+      "diagnostic_reference_token_count": 35,
+      "diagnostic_reference_mean_confidence": 99.77
+    },
+    {
+      "filename": "08181_warped_document_perspective_shadow.jpg",
+      "expected_status": "REVIEW_REQUIRED",
+      "expected_selected_provider": "paddleocr",
+      "expected_fallback_used": false,
+      "expected_anchors_captured": ["308044"],
+      "expected_anchors_absent": ["69.22"],
+      "expected_critical_total_value_missing": true,
+      "expected_review_reason": "CRITICAL_TOTAL_VALUE_MISSING",
+      "notes": [
+        "The visible grand-total value 69.22 must never be inferred or written into OCR evidence (no calculated value, no subtotal+tax substitute).",
+        "308044 (invoice number) and the TOTAL label are captured; only the monetary value next to TOTAL is absent from the OCR evidence.",
+        "The single anchor miss must be safely contained by REVIEW_REQUIRED routing, not silently accepted as SUCCEEDED."
+      ],
+      "diagnostic_reference_token_count": 52,
+      "diagnostic_reference_mean_confidence": 99.71,
+      "diagnostic_reference_evidence_image_dimensions": [6360, 2399]
+    }
+  ],
+  "aggregate_expected": {
+    "documents_processed": 4,
+    "pages_processed": 4,
+    "paddleocr_pages": 4,
+    "tesseract_fallback_pages": 0,
+    "successful_documents": 3,
+    "review_required_documents": 1,
+    "failed_documents": 0,
+    "semantic_anchors_total": 8,
+    "semantic_anchors_captured": 7,
+    "semantic_anchors_missed_and_contained": 1,
+    "diagnostic_reference_total_tokens": 188
+  },
+  "invalid_hash_test": {
+    "description": "A page input with SHA-256 '0'*64 must fail closed at the Phase 3 boundary, for both providers.",
+    "expected_status": "FAILED",
+    "expected_review_required": true,
+    "expected_error_substring": "SHA-256"
+  }
+}

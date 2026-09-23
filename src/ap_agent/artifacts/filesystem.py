@@ -1,18 +1,23 @@
 """Generic filesystem artifact writers shared by Phase 2 and Phase 3.
 
-Source: notebook cell 26 ("PHASE 2 — CELL 1"), active-definition table §2
-`artifacts/filesystem.py`. `calculate_file_sha256` and `write_json_atomically`
-are the **Phase 2/3 binding** (§3.2 of the modularisation map): they are
-globally shadowed later in the notebook (cell 63's `write_json_atomically`,
-cell 73's `calculate_file_sha256`), but Phase 2 and Phase 3 were validated
-against these cell-26 bytes, and the two `write_json_atomically`
-implementations write different bytes (D-8). This module keeps only the
-cell-26 behaviour; the cell-63 byte format belongs to the Phase 4
-normalisation milestone under a distinct name, per D-8.
+Source: notebook cell 26 ("PHASE 2 — CELL 1") for `calculate_file_sha256`,
+`write_json_atomically` and `save_png_atomically`; cell 38 ("PHASE 3 —
+CELL 3") for `write_text_atomically`; cell 41 ("PHASE 3 — CORRECTION CELL
+4B") for `save_pil_image_atomically` (active-definition table §2
+`artifacts/filesystem.py`).
 
-No heavy or optional dependency (`cv2`, `numpy`) is imported at module
-level: both are imported lazily inside `save_png_atomically`, the only
-function that needs them (CLAUDE.md).
+`calculate_file_sha256` and `write_json_atomically` are the **Phase 2/3
+binding** (§3.2 of the modularisation map): they are globally shadowed
+later in the notebook (cell 63's `write_json_atomically`, cell 73's
+`calculate_file_sha256`), but Phase 2 and Phase 3 were validated against
+these cell-26 bytes, and the two `write_json_atomically` implementations
+write different bytes (D-8). This module keeps only the cell-26 behaviour;
+the cell-63 byte format belongs to the Phase 4 normalisation milestone
+under a distinct name, per D-8.
+
+No heavy or optional dependency (`cv2`, `numpy`, `PIL`) is imported at
+module level: each is imported lazily inside the function that needs it
+(CLAUDE.md).
 """
 
 from __future__ import annotations
@@ -24,11 +29,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
+    from PIL import Image
 
 __all__ = [
     "calculate_file_sha256",
     "write_json_atomically",
     "save_png_atomically",
+    "write_text_atomically",
+    "save_pil_image_atomically",
 ]
 
 
@@ -79,5 +87,49 @@ def save_png_atomically(
 
     if not success:
         raise IOError(f"Could not write image: {temporary_path}")
+
+    temporary_path.replace(destination)
+
+
+def write_text_atomically(
+    destination: Path,
+    text: str,
+) -> None:
+    destination.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    temporary_path = destination.with_suffix(
+        destination.suffix + ".tmp"
+    )
+
+    temporary_path.write_text(
+        text,
+        encoding="utf-8",
+    )
+
+    temporary_path.replace(destination)
+
+
+def save_pil_image_atomically(
+    image: "Image.Image",
+    destination: Path,
+) -> None:
+    destination.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    temporary_path = destination.with_name(
+        destination.stem
+        + ".tmp"
+        + destination.suffix
+    )
+
+    image.convert("RGB").save(
+        temporary_path,
+        format="PNG",
+    )
 
     temporary_path.replace(destination)

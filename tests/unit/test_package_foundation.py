@@ -89,6 +89,10 @@ PROCESSING_MODULES = [
     "ap_agent.artifacts.filesystem",
     "ap_agent.artifacts.serialization",
     "ap_agent.tools.preprocessing",
+    "ap_agent.tools.ocr_evidence",
+    "ap_agent.tools.ocr",
+    "ap_agent.adapters.tesseract_adapter",
+    "ap_agent.adapters.paddleocr_adapter",
 ]
 
 
