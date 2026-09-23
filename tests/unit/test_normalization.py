@@ -1,7 +1,11 @@
 """M2 contract tests for Phase 4 (normalization) models.
 
 Contracts only. Candidate-extraction and normalisation functions (cells
-53-63) are out of scope until the processing-extraction milestone.
+53-63) are out of scope until the processing-extraction milestone, with
+one narrow exception: `clean_ocr_text` and `create_comparison_key` (cell
+53) are pure text-normalisation helpers extracted so that the public
+`OCREvidenceIndex.search()` contract method is operational, rather than
+predictably raising `NameError`.
 """
 
 import dataclasses
@@ -29,6 +33,8 @@ from ap_agent.models.normalization import (
     NormalizedLineItem,
     NormalizedValueType,
     OCREvidenceIndex,
+    clean_ocr_text,
+    create_comparison_key,
 )
 
 
@@ -232,21 +238,183 @@ def test_ocr_evidence_index_get_and_page():
     assert index.page(2) == ()
 
 
-def test_ocr_evidence_index_search_needs_deferred_normalization_tools():
-    """Documented deviation: `search()` calls `create_comparison_key`, a
-    Phase 4 tool function deferred to the processing-extraction milestone.
-    Until `tools/normalization.py` lands, calling `search()` fails with
-    `NameError`; `get()` and `page()` do not depend on it."""
+def test_clean_ocr_text_handles_none_and_collapses_whitespace():
+    """Verbatim notebook behaviour (cell 53): `None` maps to `""`; runs of
+    whitespace (including non-breaking spaces, via NFKC normalisation)
+    collapse to a single space; leading/trailing whitespace is stripped;
+    case and punctuation are otherwise preserved."""
 
+    assert clean_ocr_text(None) == ""
+    assert clean_ocr_text("") == ""
+    assert clean_ocr_text("  TOTAL:   $69.22  ") == "TOTAL: $69.22"
+    assert clean_ocr_text("Line1\n\nLine2\t\tLine3") == "Line1 Line2 Line3"
+    # NFKC normalisation folds a non-breaking space into an ordinary one,
+    # which WHITESPACE_PATTERN then collapses.
+    assert clean_ocr_text("Snyder, Hammond") == "Snyder, Hammond"
+    assert clean_ocr_text(42) == "42"
+
+
+def test_create_comparison_key_uppercases_and_strips_non_alphanumerics():
+    """Verbatim notebook behaviour (cell 53): case-insensitive, punctuation
+    and whitespace are removed entirely (not just collapsed), and `None`
+    or an empty value produces an empty key."""
+
+    assert create_comparison_key("Total:") == "TOTAL"
+    assert create_comparison_key("  total  ") == "TOTAL"
+    assert create_comparison_key("Bill To") == "BILLTO"
+    assert create_comparison_key("TOTAL") == create_comparison_key("  ToTaL:  ")
+    assert create_comparison_key(None) == ""
+    assert create_comparison_key("") == ""
+    assert create_comparison_key("---") == ""
+
+
+def test_ocr_evidence_index_search_executes_successfully():
+    reference = EvidenceReference(
+        reference_id=uuid4(),
+        reference_type=EvidenceReferenceType.LINE,
+        page_number=1,
+        reading_order=0,
+        raw_text="TOTAL: $69.22",
+        confidence=99.0,
+        bounding_box=(0, 0, 10, 10),
+    )
     index = OCREvidenceIndex(
         document_id=uuid4(),
-        references_by_id={},
+        references_by_id={str(reference.reference_id): reference},
         token_references=(),
-        line_references=(),
-        references_by_page={},
+        line_references=(reference,),
+        references_by_page={1: (reference,)},
     )
-    with pytest.raises(NameError):
-        index.search("TOTAL")
+
+    # Non-exact, case-insensitive, punctuation-insensitive substring match.
+    assert index.search("total") == (reference,)
+    assert index.search("$69.22") == (reference,)
+
+    # An empty or all-punctuation search key matches nothing, per the
+    # notebook's `if not search_key: return tuple()` short-circuit.
+    assert index.search("") == ()
+    assert index.search("   ") == ()
+    assert index.search("---") == ()
+
+    # A value with no matching reference returns the notebook-compatible
+    # empty result, not an error.
+    assert index.search("nonexistent") == ()
+
+    # reference_type filtering still applies alongside the fixed search.
+    assert index.search("total", reference_type=EvidenceReferenceType.TOKEN) == ()
+    assert index.search("total", reference_type=EvidenceReferenceType.LINE) == (
+        reference,
+    )
+
+
+def test_ocr_evidence_index_search_exact_matches():
+    reference = EvidenceReference(
+        reference_id=uuid4(),
+        reference_type=EvidenceReferenceType.TOKEN,
+        page_number=1,
+        reading_order=0,
+        raw_text="TOTAL",
+        confidence=99.0,
+        bounding_box=(0, 0, 10, 10),
+    )
+    index = OCREvidenceIndex(
+        document_id=uuid4(),
+        references_by_id={str(reference.reference_id): reference},
+        token_references=(reference,),
+        line_references=(),
+        references_by_page={1: (reference,)},
+    )
+
+    # Exact comparison-key equality: "TOTAL" matches "TOTAL" exactly.
+    assert index.search("TOTAL", exact=True) == (reference,)
+    assert index.search("total", exact=True) == (reference,)
+
+    # A comparison key that is only a substring does not match exactly.
+    assert index.search("TOT", exact=True) == ()
+    assert index.search("TOT", exact=False) == (reference,)
+
+
+def test_ocr_evidence_index_get_page_and_search_are_independent():
+    """`get()`, `page()` and `search()` must each work on their own: none
+    is required to make another succeed, and none mutates the index."""
+
+    reference = EvidenceReference(
+        reference_id=uuid4(),
+        reference_type=EvidenceReferenceType.TOKEN,
+        page_number=1,
+        reading_order=0,
+        raw_text="TOTAL",
+        confidence=99.0,
+        bounding_box=(0, 0, 10, 10),
+    )
+    index = OCREvidenceIndex(
+        document_id=uuid4(),
+        references_by_id={str(reference.reference_id): reference},
+        token_references=(reference,),
+        line_references=(),
+        references_by_page={1: (reference,)},
+    )
+
+    before = dict(index.references_by_id)
+
+    # Call in an order that does not favour any single method, and confirm
+    # each returns its own correct, independent result.
+    assert index.search("TOTAL") == (reference,)
+    assert index.page(1) == (reference,)
+    assert index.get(reference.reference_id) is reference
+    assert index.page(1) == (reference,)
+    assert index.get(reference.reference_id) is reference
+    assert index.search("TOTAL") == (reference,)
+
+    assert index.references_by_id == before
+
+
+def test_ocr_evidence_index_instances_do_not_share_mutable_state():
+    first_reference = EvidenceReference(
+        reference_id=uuid4(),
+        reference_type=EvidenceReferenceType.TOKEN,
+        page_number=1,
+        reading_order=0,
+        raw_text="ALPHA",
+        confidence=99.0,
+        bounding_box=(0, 0, 10, 10),
+    )
+    second_reference = EvidenceReference(
+        reference_id=uuid4(),
+        reference_type=EvidenceReferenceType.TOKEN,
+        page_number=1,
+        reading_order=0,
+        raw_text="BETA",
+        confidence=99.0,
+        bounding_box=(0, 0, 10, 10),
+    )
+
+    first_index = OCREvidenceIndex(
+        document_id=uuid4(),
+        references_by_id={str(first_reference.reference_id): first_reference},
+        token_references=(first_reference,),
+        line_references=(),
+        references_by_page={1: (first_reference,)},
+    )
+    second_index = OCREvidenceIndex(
+        document_id=uuid4(),
+        references_by_id={str(second_reference.reference_id): second_reference},
+        token_references=(second_reference,),
+        line_references=(),
+        references_by_page={1: (second_reference,)},
+    )
+
+    assert first_index.search("alpha") == (first_reference,)
+    assert first_index.search("beta") == ()
+    assert second_index.search("beta") == (second_reference,)
+    assert second_index.search("alpha") == ()
+
+    assert first_index.references_by_id is not second_index.references_by_id
+    assert first_index.get(second_reference.reference_id) is None
+    assert second_index.get(first_reference.reference_id) is None
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first_index.document_id = second_index.document_id
 
 
 def test_candidate_selection_and_line_item_group_instantiate():

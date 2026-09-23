@@ -5,6 +5,10 @@ Sources (active-definition table §2 `models/normalization.py`):
     `NormalizationInput`, `EvidenceReference`, `InvoiceFieldCandidate`,
     `NormalizedInvoiceField`, `NormalizedLineItem`,
     `NormalizedInvoiceRecord`, `NormalizationEvent`, `NormalizationResult`.
+  - notebook cell 53 ("PHASE 4 — CELL 2"): `clean_ocr_text` and
+    `create_comparison_key`, narrowly extracted as a correction (see below;
+    not part of the original M2 scope, which deferred all Phase 4
+    functions to M3).
   - notebook cell 54 ("PHASE 4 — CORRECTION CELL 2A"): `OCREvidenceIndex`
     (supersedes the cell-53 definition; §3.1/§3.2).
   - notebook cell 55 ("PHASE 4 — REPLACEMENT CELL 3"): `CandidateSelection`.
@@ -20,20 +24,31 @@ annotated `BoundingBox` but the validated Phase 4 code populates it with a
 4-tuple (`extract_bounding_box`), not a `BoundingBox` instance (R-09 in the
 modularisation map). The annotation is preserved verbatim.
 
-Deviation (documented, not fixed): `OCREvidenceIndex.search()` calls
-`create_comparison_key`, a Phase 4 tool function deferred to the
-processing-extraction milestone (`tools/normalization.py`). The method
-body is preserved verbatim; calling `search()` before that function exists
-in the running process raises `NameError`. `get()` and `page()` do not
-depend on it and work today.
+Correction (M2, post-initial-extraction): `OCREvidenceIndex.search()` is a
+public contract method and originally called `create_comparison_key`
+without that function existing anywhere in `src/`, so calling it always
+raised `NameError`. `create_comparison_key` (and the `clean_ocr_text` text
+utility it depends on) are pure, dependency-free string functions — no
+config, no I/O, no OCR/candidate logic, no notebook globals — so they are
+narrowly extracted here, verbatim from cell 53, to make the contract
+operational. No other Phase 4 processing function is extracted; the rest
+of cell 53 (`extract_bounding_box`, `parse_decimal_value`,
+`normalize_monetary_value`, `normalize_currency_code`,
+`normalize_date_value`, `calculate_combined_confidence`,
+`create_normalization_id`, `token_to_evidence_reference`,
+`line_to_evidence_reference`, `build_ocr_evidence_index`) remains deferred
+to `tools/normalization.py` in M3.
 """
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from typing import Any
 from uuid import UUID
 
 from ap_agent.models.ocr import BoundingBox, OCRDocumentResult
@@ -53,6 +68,8 @@ __all__ = [
     "NormalizedInvoiceRecord",
     "NormalizationEvent",
     "NormalizationResult",
+    "clean_ocr_text",
+    "create_comparison_key",
     "OCREvidenceIndex",
     "CandidateSelection",
     "LineItemCandidateGroup",
@@ -264,6 +281,39 @@ class NormalizationResult:
     review_reasons: tuple[str, ...] = field(default_factory=tuple)
 
     errors: tuple[str, ...] = field(default_factory=tuple)
+
+
+# ------------------------------------------------------------
+# Pure text-normalisation helpers (notebook cell 53, "PHASE 4 — CELL 2").
+#
+# Extracted narrowly so that `OCREvidenceIndex.search()` below is
+# operational. Both are pure functions of their argument: no config, no
+# I/O, no notebook globals.
+# ------------------------------------------------------------
+
+WHITESPACE_PATTERN = re.compile(r"\s+")
+NON_ALPHANUMERIC_PATTERN = re.compile(r"[^A-Z0-9]+")
+
+
+def clean_ocr_text(value: Any) -> str:
+    """Clean OCR text without changing its meaning."""
+
+    if value is None:
+        return ""
+
+    text = unicodedata.normalize("NFKC", str(value))
+
+    text = WHITESPACE_PATTERN.sub(" ", text)
+
+    return text.strip()
+
+
+def create_comparison_key(value: Any) -> str:
+    """Create a case-insensitive key for label and value matching."""
+
+    cleaned = clean_ocr_text(value).upper()
+
+    return NON_ALPHANUMERIC_PATTERN.sub("", cleaned)
 
 
 @dataclass(frozen=True)

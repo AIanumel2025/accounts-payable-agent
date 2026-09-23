@@ -90,7 +90,7 @@ definition by adding `evidence_image_path` and `evidence_image_sha256`
 routing function (cells 36, 38, 40, 41, 43, 44, 47) is deferred, including
 the four `tools/ocr_evidence.py` helpers approved by D-7.
 
-### Phase 4 — normalization (cell 51, "PHASE 4 — CELL 1"; plus cells 54, 55, 57) → `models/normalization.py`, `config/settings.py`
+### Phase 4 — normalization (cell 51, "PHASE 4 — CELL 1"; plus cells 53, 54, 55, 57) → `models/normalization.py`, `config/settings.py`
 
 From cell 51: `NormalizationStatus`, `InvoiceFieldName`,
 `NormalizedValueType`, `EvidenceReferenceType`, `ExtractionMethod`,
@@ -100,6 +100,19 @@ From cell 51: `NormalizationStatus`, `InvoiceFieldName`,
 external dependency), `NormalizationEvent`, `NormalizationResult`.
 `NormalizationConfig` → `config/settings.py`. `normalization_utc_now` is a
 processing function and is deferred.
+
+From cell 53 ("PHASE 4 — CELL 2"), added in a **post-initial-extraction
+M2 correction**: `clean_ocr_text` and `create_comparison_key`, extracted
+narrowly and verbatim (including their two regex constants,
+`WHITESPACE_PATTERN` and `NON_ALPHANUMERIC_PATTERN`) because
+`OCREvidenceIndex.search()` — a public contract method — calls
+`create_comparison_key`, which calls `clean_ocr_text`. Both are pure
+string functions (stdlib `re`/`unicodedata` only; no config, no I/O, no
+notebook globals) confirmed by the map to be the active, unsuperseded
+Phase 4 definitions (cell 54 redefines `OCREvidenceIndex` and its
+supporting evidence-reference functions but does not redefine
+`clean_ocr_text` or `create_comparison_key`). No other function from cell
+53 was extracted.
 
 From cell 54 ("PHASE 4 — CORRECTION CELL 2A"): `OCREvidenceIndex`, the
 active definition that supersedes the cell-53 version (§3.1/§3.2 — the
@@ -111,9 +124,15 @@ From cell 55 ("PHASE 4 — REPLACEMENT CELL 3"): `CandidateSelection`.
 
 From cell 57 ("PHASE 4 — CELL 4"): `LineItemCandidateGroup`.
 
-Every candidate-extraction, normalisation and persistence function from
-cells 53-63 is deferred, along with the `FIELD_LABELS` and other regex/label
-constants that only those functions read.
+Every remaining candidate-extraction, normalisation and persistence
+function from cells 53-63 is still deferred (`extract_bounding_box`,
+`parse_decimal_value`, `normalize_monetary_value`,
+`normalize_currency_code`, `normalize_date_value`,
+`calculate_combined_confidence`, `create_normalization_id`,
+`token_to_evidence_reference`, `line_to_evidence_reference`,
+`build_ocr_evidence_index`, and everything in cells 55-63), along with the
+`FIELD_LABELS` and other regex/label constants that only those functions
+read. `tools/normalization.py` was not created.
 
 ### Phase 5 — financial validation (cell 68, "PHASE 5 — CELL 1") → `models/validation.py`, `config/settings.py`
 
@@ -144,12 +163,21 @@ etc.) are all processing functions, out of M2 scope by design.
 Everything classified `SUPERSEDED`, `TEST_ONLY`, `DIAGNOSTIC_ONLY` or
 `NOTEBOOK_ORCHESTRATION` in the modularisation map, plus every
 `ACTIVE_PRODUCTION` **function** (as opposed to contract/enum/exception/
-config), stays out of `src/` until the processing-extraction milestone.
-That includes, notably:
+config), stays out of `src/` until the processing-extraction milestone,
+with one narrow, documented exception (§6 below): `clean_ocr_text` and
+`create_comparison_key` (cell 53), extracted because they are pure,
+dependency-free text-normalisation helpers required to make the public
+`OCREvidenceIndex.search()` contract method operational. No other
+processing function was extracted, and `tools/normalization.py` was not
+created. Deferred items include, notably:
 
 - All `tools/*.py`, `adapters/*.py`, `artifacts/*.py` and
   `orchestration/*.py` functions (§2 of the modularisation map lists every
-  one, with its target file).
+  one, with its target file) — including every remaining Phase 4 function
+  from cells 53, 55, 57, 60, 61 and 63 (`extract_bounding_box`,
+  `parse_decimal_value`, `normalize_monetary_value`,
+  `create_normalization_id`, candidate extraction, line-item extraction,
+  `normalize_invoice_document`, etc.).
 - `tools/ocr_evidence.py` (D-7-approved new module) — reserved, per the
   task brief, for the OCR-extraction milestone.
 - The two `write_json_atomically` implementations and the two
@@ -171,6 +199,7 @@ config.settings   -> models.normalization (InvoiceFieldName, for two config defa
 exceptions        -> models.ingestion (IngestionErrorCode)
 models.ingestion  -> models.common (DocumentRecord, ProcessingEvent)
 models.normalization -> models.ocr (BoundingBox, OCRDocumentResult)
+models.normalization -> stdlib only (re, unicodedata) for clean_ocr_text/create_comparison_key
 models.validation -> models.normalization (NormalizedInvoiceRecord)
 models.common, models.preprocessing, models.ocr -> no internal deps
 ```
@@ -178,7 +207,13 @@ models.common, models.preprocessing, models.ocr -> no internal deps
 This matches the acyclic graph in modularisation map §4.3: `config ->
 models`, `exceptions -> models.ingestion`, and inside `models`:
 `normalization -> ocr`, `validation -> normalization`, `ingestion ->
-common`. No model imports `config` or `exceptions`. All `__init__.py`
+common`. No model imports `config` or `exceptions`. `clean_ocr_text` and
+`create_comparison_key` were placed directly in `models/normalization.py`
+(the task's preferred location) rather than a new shared-utility module:
+their only dependencies are the Python standard library (`re`,
+`unicodedata`), so a separate module would add an import hop without
+resolving any cycle or reuse concern — the dependency graph does not
+demonstrate that a separate module would be cleaner. All `__init__.py`
 files are empty (C-5): `import ap_agent` and every contract-module import
 pull in only `pydantic` — nothing from the heavy/optional dependency list
 (`pandas`, `matplotlib`, `IPython`, `paddle`, `paddleocr`, `pytesseract`,
@@ -187,14 +222,27 @@ pull in only `pydantic` — nothing from the heavy/optional dependency list
 
 ## 6. Deviations from the notebook contracts
 
-1. **`OCREvidenceIndex.search()` calls a not-yet-extracted function.**
-   `search()` calls `create_comparison_key`, a Phase 4 tool function
-   deferred to the processing-extraction milestone. The method body is
-   preserved verbatim (per the "do not blindly fix" rule); calling
-   `search()` today raises `NameError`. `get()` and `page()` have no such
-   dependency and work correctly today. Covered by
-   `test_normalization.py::test_ocr_evidence_index_search_needs_deferred_normalization_tools`,
-   which asserts the `NameError` rather than hiding it.
+1. **Resolved correction: `OCREvidenceIndex.search()` now works.** The
+   original M2 extraction left `search()` calling `create_comparison_key`
+   with that function undefined anywhere in `src/`, so any call raised
+   `NameError`. Because `search()` is a public contract method, this was a
+   predictably broken merge and has been corrected: `clean_ocr_text` and
+   `create_comparison_key` (verbatim from cell 53, "PHASE 4 — CELL 2",
+   including their two regex constants) are now extracted into
+   `models/normalization.py`. This is a narrow, dependency-safe exception
+   to "M2 extracts contracts, not functions" — both are pure functions of
+   their argument, with no config, I/O, notebook-global or candidate/
+   normalisation-logic dependency, extracted solely to make an existing
+   public contract method operational rather than predictably broken.
+   `search()`'s own body is unchanged; it already called
+   `create_comparison_key` by name, which now resolves. `get()` and
+   `page()` never depended on it and were unaffected either way. Covered
+   by `test_normalization.py::test_clean_ocr_text_handles_none_and_collapses_whitespace`,
+   `test_create_comparison_key_uppercases_and_strips_non_alphanumerics`,
+   `test_ocr_evidence_index_search_executes_successfully`,
+   `test_ocr_evidence_index_search_exact_matches`,
+   `test_ocr_evidence_index_get_page_and_search_are_independent`, and
+   `test_ocr_evidence_index_instances_do_not_share_mutable_state`.
 2. **`EvidenceReference.bounding_box` annotation vs. runtime type (R-09, not
    introduced by M2).** The field is annotated `BoundingBox` but the
    validated Phase 4 code populates it with a plain 4-tuple. Plain
@@ -204,7 +252,7 @@ pull in only `pydantic` — nothing from the heavy/optional dependency list
    `test_normalization.py::test_evidence_reference_bounding_box_annotation_is_not_enforced`.
 3. **`from __future__ import annotations` is not module-uniform.** The
    notebook's IPython session carried this flag forward from cell 26
-   onward (R-12), so cells 26, 34, 51, 54, 55, 57 and 68 all *executed*
+   onward (R-12), so cells 26, 34, 51, 53, 54, 55, 57 and 68 all *executed*
    with postponed annotations active, even though only cells 26 and 34
    contain the literal import statement. `models/preprocessing.py`,
    `models/ocr.py`, `models/normalization.py` and `models/validation.py`
@@ -237,16 +285,19 @@ $ pip install -e ".[dev]"
 Successfully installed ... ap-agent-0.2.0 pydantic-2.13.5 pytest-8.4.2 ...
 
 $ python3 -m pytest -q
-78 tests collected
-78 passed in 0.29s
+83 tests collected
+83 passed in 0.41s
 ```
 
 Breakdown (`pytest --collect-only -q`): `test_fixture_manifest.py` (4,
 pre-existing M1 tests, still green), `test_ingestion.py` (16),
 `test_preprocessing.py` (6), `test_ocr.py` (7), `test_normalization.py`
-(12), `test_financial_validation.py` (9), `test_package_foundation.py`
-(24, parametrized import/hygiene/fixture-leakage checks). No OCR engine
-ran; no fixture bytes were read except by the pre-existing manifest test.
+(17, up from 12: the `NameError`-expecting test was removed and six
+positive tests were added for the `create_comparison_key`/`search()`
+correction — see §6.1), `test_financial_validation.py` (9),
+`test_package_foundation.py` (24, parametrized import/hygiene/
+fixture-leakage checks). No OCR engine ran; no fixture bytes were read
+except by the pre-existing manifest test.
 
 Coverage against the task's test requirements:
 
@@ -284,6 +335,17 @@ Coverage against the task's test requirements:
   parametrized over the four filenames and eight recorded totals/anchors
   from §10 of the modularisation map, scanning every `.py` file under
   `src/ap_agent/`.
+- **A public contract method must not be merged in a predictably broken
+  state** — `OCREvidenceIndex.search()` is exercised end-to-end
+  (`test_ocr_evidence_index_search_executes_successfully`,
+  `test_ocr_evidence_index_search_exact_matches`), its two underlying pure
+  helpers are exercised against the notebook's exact normalisation rules
+  (`test_clean_ocr_text_handles_none_and_collapses_whitespace`,
+  `test_create_comparison_key_uppercases_and_strips_non_alphanumerics`),
+  and its independence from `get()`/`page()` and from other index
+  instances is exercised explicitly
+  (`test_ocr_evidence_index_get_page_and_search_are_independent`,
+  `test_ocr_evidence_index_instances_do_not_share_mutable_state`).
 
 No OCR run and no full notebook execution were performed, per the task
 brief.
@@ -298,11 +360,15 @@ brief.
   not persisted to disk in the notebook. No OCR persistence code exists
   yet in `src/`, so this cannot manifest in M2; it becomes relevant the
   moment `tools/ocr.py` is extracted (D-4/D-5).
-- **New, M2-scoped: `OCREvidenceIndex.search()` is currently unusable.**
-  Documented in §6.1 above and covered by an explicit test that expects
-  `NameError`. This resolves itself automatically once
-  `tools/normalization.py` (with `create_comparison_key`) is extracted —
-  no contract change will be needed.
+- **Resolved: `OCREvidenceIndex.search()` was previously unusable.**
+  Fixed by the correction in §6.1: `clean_ocr_text` and
+  `create_comparison_key` are now extracted verbatim into
+  `models/normalization.py`, and `search()` (unchanged) resolves them
+  correctly. No `NameError` risk remains on this path. When
+  `tools/normalization.py` is created in M3, its own
+  `create_comparison_key` must be either identical to this one or must
+  replace this narrowly-extracted copy outright (a single source of
+  truth) — do not let two divergent copies coexist.
 - **Self-test drift (R-08) has not yet been exercised.** M2 did not port
   the cell 53/55 self-asserts (they exercise *functions*, out of scope).
   When the processing-extraction milestone ports them, it must run them
@@ -332,10 +398,15 @@ dependencies it will need are now in place and tested:
   cycles and accidental heavy imports.
 - `tools/ocr_evidence.py` is confirmed reserved and untouched, ready for
   the four evidence-ID/bbox helpers per D-7.
-- Two known, harmless deviations are pinned down and test-covered
-  (`OCREvidenceIndex.search()`, `EvidenceReference.bounding_box`), so M3
-  can extract `create_comparison_key` and `extract_bounding_box` without
-  first having to rediscover why the M2 contracts look the way they do.
+- `OCREvidenceIndex.search()` is now fully operational and test-covered
+  (no more predictably-broken public method); the one remaining, harmless
+  deviation (`EvidenceReference.bounding_box`'s annotation vs. its runtime
+  tuple) is pinned down and test-covered, so M3 can extract
+  `extract_bounding_box` without first having to rediscover why the
+  annotation looks the way it does. M3 should treat `models.normalization`'s
+  `clean_ocr_text`/`create_comparison_key` as the single source of truth
+  for those two functions rather than redefining them inside
+  `tools/normalization.py` (see the note in §8 above).
 - The duplicate-name policy for M3's actual collisions
   (`write_json_atomically` ×2, `append_unique_reason` ×2,
   `calculate_file_sha256`) is already decided (D-8/D-9/D-10) and does not
