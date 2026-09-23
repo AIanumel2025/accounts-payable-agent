@@ -1,0 +1,68 @@
+{
+  "manifest_version": "1.0",
+  "collection_name": "accounts-payable-agent-golden-invoices",
+  "purpose": "Controlled regression fixtures for Phases 1 through 5",
+  "fixture_count": 4,
+  "usage_scope": [
+    "unit_testing",
+    "integration_testing",
+    "regression_testing",
+    "notebook_to_module_parity"
+  ],
+  "notes": [
+    "These fixtures formed the validated notebook test set.",
+    "They must never be hardcoded into production runtime logic.",
+    "Expected outputs belong in test or golden-result files.",
+    "Generated preprocessing, OCR, normalization and validation artifacts are not source fixtures."
+  ],
+  "fixtures": [
+    {
+      "filename": "08181_flat_document.png",
+      "original_notebook_filename": "08181_flat_document.png",
+      "sha256": "4d8b79e7843f7acb42947da9ef7e2bb7d0989943ceffb7035257edfcbc156083",
+      "size_bytes": 185412,
+      "file_extension": ".png",
+      "media_type": "image/png",
+      "fixture_role": "clean flat invoice and successful end-to-end control case",
+      "provenance_note": "Retained from the Phase 1-5 notebook validation set.",
+      "licence_review_status": "PROJECT_TEST_FIXTURE",
+      "contains_known_real_financial_data": false
+    },
+    {
+      "filename": "08181_warped_document_perspective_shadow.jpg",
+      "original_notebook_filename": "08181_warped_document_perspective_shadow.jpg",
+      "sha256": "9e6a3234447f2898c47db7d8de280933cb9081f822dae7858bb492b7c2a53b69",
+      "size_bytes": 419891,
+      "file_extension": ".jpg",
+      "media_type": "image/jpeg",
+      "fixture_role": "distorted invoice used to verify OCR completeness and fail-closed review routing when the visible grand total is not captured",
+      "provenance_note": "Retained from the Phase 1-5 notebook validation set.",
+      "licence_review_status": "PROJECT_TEST_FIXTURE",
+      "contains_known_real_financial_data": false
+    },
+    {
+      "filename": "Template1_Instance90.jpg",
+      "original_notebook_filename": "Template1_Instance90.jpg",
+      "sha256": "7df0650a9eb3a4370b8236ba283195eee4bdf7bc7e884e5f4c03a7b4d997dcff",
+      "size_bytes": 55284,
+      "file_extension": ".jpg",
+      "media_type": "image/jpeg",
+      "fixture_role": "clean image invoice with currency, tax, discount and total fields",
+      "provenance_note": "Retained from the Phase 1-5 notebook validation set.",
+      "licence_review_status": "PROJECT_TEST_FIXTURE",
+      "contains_known_real_financial_data": false
+    },
+    {
+      "filename": "invoice_Aaron Bergman_36258.pdf",
+      "original_notebook_filename": "invoice_Aaron Bergman_36258.pdf",
+      "sha256": "2e8206cd45c73701246757a641013aac483b4d58a9ee7ac3695c6f4b167c0101",
+      "size_bytes": 15813,
+      "file_extension": ".pdf",
+      "media_type": "application/pdf",
+      "fixture_role": "PDF invoice with financially valid values and a missing supplier field",
+      "provenance_note": "Retained from the Phase 1-5 notebook validation set.",
+      "licence_review_status": "PROJECT_TEST_FIXTURE",
+      "contains_known_real_financial_data": false
+    }
+  ]
+}
