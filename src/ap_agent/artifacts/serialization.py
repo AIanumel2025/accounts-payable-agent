@@ -1,5 +1,5 @@
-"""JSON-serialisation helpers for Phase 2 (preprocessing) and Phase 3 (OCR)
-contracts.
+"""JSON-serialisation helpers for Phase 2 (preprocessing), Phase 3 (OCR) and
+Phase 4 (normalisation) contracts.
 
 Source: notebook cell 28 ("PHASE 2 — CELL 2") for the Phase 2 serialisers;
 cell 38 ("PHASE 3 — CELL 3") for `bounding_box_to_dict`, `ocr_token_to_dict`,
@@ -7,17 +7,31 @@ cell 38 ("PHASE 3 — CELL 3") for `bounding_box_to_dict`, `ocr_token_to_dict`,
 cell 41 ("PHASE 3 — CORRECTION CELL 4B") for `make_json_compatible`; cell 43
 ("PHASE 3 — CORRECTION CELL 4C") for the final, active `ocr_page_result_to_dict`
 (supersedes the cell-38 version by adding the `evidence_image_path`/
-`evidence_image_sha256` fields, §3.1). Active-definition table §2
-`artifacts/serialization.py`.
+`evidence_image_sha256` fields, §3.1); cell 63 ("PHASE 4 — CELL 5") for
+`convert_to_json_safe`, the Phase 4 JSON-safety converter (active-definition
+table §2 `artifacts/serialization.py`).
 
 Extracted verbatim: field order, key names and value shapes (lists instead
 of tuples, `.value` for enums, `.isoformat()` for timestamps) match the
 notebook's own serialisers exactly, since these functions decide the
-on-disk byte layout of every Phase 2/3 JSON artifact.
+on-disk byte layout of every Phase 2/3/4 JSON artifact.
+
+`convert_to_json_safe` is a distinct, generic converter from
+`make_json_compatible`: it walks any dataclass tree (recursing through
+`dataclasses.fields`) and additionally converts `Enum`, `Decimal`, `date`
+and `datetime` values, which the Phase 4 contracts use and the Phase 2/3
+serialisers above do not need (they build their dicts by hand, field by
+field). It is the Phase 4 byte format (§3.2 of the modularisation map,
+decision D-8) and must not be confused with `make_json_compatible`, which
+serves the Phase 3 raw-provider-output payloads instead.
 """
 
 from __future__ import annotations
 
+from dataclasses import fields, is_dataclass
+from datetime import date, datetime
+from decimal import Decimal
+from enum import Enum
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -47,6 +61,7 @@ __all__ = [
     "ocr_page_result_to_dict",
     "ocr_event_to_dict",
     "ocr_document_result_to_dict",
+    "convert_to_json_safe",
 ]
 
 
@@ -316,3 +331,59 @@ def ocr_document_result_to_dict(
         ),
         "errors": list(result.errors),
     }
+
+
+# ---------------------------------------------------------
+# Phase 4 (normalisation) JSON-safety converter
+# ---------------------------------------------------------
+
+
+def convert_to_json_safe(value: Any) -> Any:
+    """Recursively convert a Phase 4 value tree into JSON-safe types.
+
+    Source: notebook cell 63 ("PHASE 4 — CELL 5"). Branch order is
+    verbatim: dataclasses recurse field by field, `Enum` -> `.value`,
+    `UUID`/`Decimal`/`Path` -> `str`, `datetime`/`date` -> `.isoformat()`,
+    dict keys are stringified (`Enum` keys use `.value` first), and
+    `list`/`tuple`/`set` all become JSON lists.
+    """
+
+    if value is None:
+        return None
+
+    if is_dataclass(value):
+        return {
+            contract_field.name: convert_to_json_safe(
+                getattr(value, contract_field.name)
+            )
+            for contract_field in fields(value)
+        }
+
+    if isinstance(value, Enum):
+        return value.value
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if isinstance(value, Decimal):
+        return str(value)
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    if isinstance(value, date):
+        return value.isoformat()
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if isinstance(value, dict):
+        return {
+            str(getattr(key, "value", key)): convert_to_json_safe(nested_value)
+            for key, nested_value in value.items()
+        }
+
+    if isinstance(value, (list, tuple, set)):
+        return [convert_to_json_safe(item) for item in value]
+
+    return value

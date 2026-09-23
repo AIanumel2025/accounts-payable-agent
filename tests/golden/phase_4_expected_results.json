@@ -1,0 +1,188 @@
+{
+  "golden_baseline_version": "1.0",
+  "source": "notebooks/accounts_payable_pipeline.ipynb cell 66 (\"PHASE 4 — FINAL VALIDATION CELL\"), cross-checked against docs/modularisation_map.md §10.4 and the M5 task brief.",
+  "purpose": "Phase 4 normalisation parity baseline for the four controlled fixtures declared in tests/fixtures/invoices/manifest.json, run through Phase 1 -> Phase 2 -> Phase 3 (PaddleOCR primary) -> Phase 4 normalisation.",
+  "environment_note": "Recovered directly from the notebook's own final validation cell (cell 66), which asserts these exact field values, line-item values and review-reason subsets against the notebook's own validated Phase 4 run. Not independently re-verified against a live PaddleOCR run in this milestone's sandbox, for the same network-egress reason documented in tests/golden/phase_3_expected_results.json (every PaddleOCR model-hosting platform is blocked at this environment's egress proxy). The `requires_paddle`-marked integration test in tests/integration/test_phase_1_to_4_pipeline.py must be run once network access is available; until then this file is the notebook-recovered semantic baseline, not an independently reproduced one.",
+  "config": {
+    "note": "normalization_config (notebook cell 51): NormalizationConfig with every field at its dataclass default (normalization_version='normalization-v1', minimum_field_confidence=70.0, ambiguity_score_margin=10.0, monetary_quantization=Decimal('0.01'), maximum_line_items=500).",
+    "normalization_version": "normalization-v1"
+  },
+  "documents": [
+    {
+      "filename": "Template1_Instance90.jpg",
+      "expected_status": "REVIEW_REQUIRED",
+      "expected_header_field_count": 8,
+      "expected_line_item_count": 5,
+      "expected_fields": {
+        "SUPPLIER_NAME": null,
+        "CUSTOMER_NAME": "Heather Snyder",
+        "INVOICE_NUMBER": null,
+        "INVOICE_DATE": "2000-04-12",
+        "DUE_DATE": "1998-03-15",
+        "CURRENCY": "EUR",
+        "SUBTOTAL": "858.86",
+        "TAX_AMOUNT": "36.45",
+        "DISCOUNT_AMOUNT": "-12.54",
+        "TOTAL_AMOUNT": "873.58"
+      },
+      "expected_lines": {
+        "description": [
+          "Sit sit together.",
+          "Maybe religious several.",
+          "Green military listen.",
+          "Course eight.",
+          "Cost number world."
+        ],
+        "quantity": ["3.00", "2.00", "6.00", "2.00", "5.00"],
+        "unit_price": ["50.47", "7.15", "34.69", "36.33", "82.47"],
+        "amount": [null, null, null, null, null]
+      },
+      "required_review_reasons": [
+        "REQUIRED_FIELD_MISSING:SUPPLIER_NAME",
+        "REQUIRED_FIELD_MISSING:INVOICE_NUMBER",
+        "CURRENCY:AMBIGUOUS_FIELD_CANDIDATES"
+      ],
+      "notes": [
+        "Review remains required: two required fields missing plus an ambiguous currency candidate.",
+        "Missing values (SUPPLIER_NAME, INVOICE_NUMBER) are not invented."
+      ]
+    },
+    {
+      "filename": "08181_flat_document.png",
+      "expected_status": "SUCCEEDED",
+      "expected_header_field_count": 8,
+      "expected_line_item_count": 5,
+      "expected_fields": {
+        "SUPPLIER_NAME": "Snyder, Hammond and Anderson",
+        "CUSTOMER_NAME": "Clark-Williams",
+        "INVOICE_NUMBER": "308044",
+        "INVOICE_DATE": "2002-06-28",
+        "DUE_DATE": null,
+        "CURRENCY": "USD",
+        "SUBTOTAL": "63.45",
+        "TAX_AMOUNT": "5.77",
+        "TOTAL_AMOUNT": "69.22"
+      },
+      "expected_lines": {
+        "description": [
+          "Set 12 Colour Pencils Spaceboy",
+          "Red Retrospot Charlotte Bag",
+          "Spaceboy Mini Backpack",
+          "Set Of 4 Pantry Jelly Moulds",
+          "Heart Of Wicker Large"
+        ],
+        "quantity": ["10", "4", "2", "10", "7"],
+        "unit_price": ["0.65", "0.85", "4.15", "2.46", "2.95"],
+        "amount": ["6.50", "3.40", "8.30", "24.60", "20.65"]
+      },
+      "required_review_reasons": [],
+      "notes": ["Review required: false. No review reasons at all."]
+    },
+    {
+      "filename": "invoice_Aaron Bergman_36258.pdf",
+      "expected_status": "REVIEW_REQUIRED",
+      "expected_header_field_count": 10,
+      "expected_line_item_count": 1,
+      "expected_fields": {
+        "SUPPLIER_NAME": null,
+        "CUSTOMER_NAME": "Aaron Bergman",
+        "INVOICE_NUMBER": "36258",
+        "INVOICE_DATE": "2012-03-06",
+        "PURCHASE_ORDER_NUMBER": "CA-2012-AB10015140-40974",
+        "CURRENCY": "USD",
+        "SUBTOTAL": "48.71",
+        "DISCOUNT_AMOUNT": "9.74",
+        "SHIPPING_AMOUNT": "11.13",
+        "TOTAL_AMOUNT": "50.10",
+        "PAYMENT_TERMS": null
+      },
+      "expected_lines": {
+        "description": ["Global Push Button Manager's Chair, Indigo"],
+        "quantity": ["1"],
+        "unit_price": ["48.71"],
+        "amount": ["48.71"]
+      },
+      "required_review_reasons": ["REQUIRED_FIELD_MISSING:SUPPLIER_NAME"],
+      "notes": [
+        "Review remains required for the missing supplier.",
+        "Financial values (48.71, 50.10) are observed OCR values, not newly calculated values.",
+        "PAYMENT_TERMS is None: the Order ID must not be used as a payment-terms value.",
+        "CUSTOMER_ADDRESS (not asserted by field value above) must contain '98103', 'Seattle', 'Washington', 'United', 'States'."
+      ]
+    },
+    {
+      "filename": "08181_warped_document_perspective_shadow.jpg",
+      "expected_status": "REVIEW_REQUIRED",
+      "expected_header_field_count": 6,
+      "expected_line_item_count": 5,
+      "expected_fields": {
+        "SUPPLIER_NAME": "Snyder, Hammond and Anderson",
+        "CUSTOMER_NAME": "Clark-Williams",
+        "INVOICE_NUMBER": "308044",
+        "INVOICE_DATE": "2002-06-28",
+        "DUE_DATE": null,
+        "CURRENCY": null,
+        "SUBTOTAL": "63.45",
+        "TAX_AMOUNT": "5.77",
+        "TOTAL_AMOUNT": null
+      },
+      "expected_lines": {
+        "description": [
+          "Set 12 Colour Pencils Spaceboy",
+          "Red Retrospot Charlotte Bag",
+          "Spaceboy Mini Backpack",
+          "Set Of 4 Pantry Jelly Moulds",
+          "Heart Of Wicker Large"
+        ],
+        "quantity": ["10", "4", "2", "10", "7"],
+        "unit_price": ["0.65", "0.85", "4.15", "2.46", "2.95"],
+        "amount": ["6.50", "3.40", "8.30", "24.60", "20.65"]
+      },
+      "required_review_reasons": [
+        "REQUIRED_FIELD_MISSING:CURRENCY",
+        "REQUIRED_FIELD_MISSING:TOTAL_AMOUNT",
+        "INHERITED_OCR_STATUS:REVIEW_REQUIRED",
+        "INHERITED_OCR_REVIEW_REQUIRED",
+        "OCR_PAGE_1:CRITICAL_TOTAL_VALUE_MISSING"
+      ],
+      "notes": [
+        "TOTAL_AMOUNT is None: the value 69.22 must never appear as the normalized total (no arithmetic inference from subtotal + tax; the OCR evidence itself never captured a TOTAL value on this warped scan).",
+        "Upstream Phase 3 review state (the missing-TOTAL-value guard) remains contained: the OCR_PAGE_1:CRITICAL_TOTAL_VALUE_MISSING and INHERITED_OCR_* reasons are present and distinguishable from Phase 4's own REQUIRED_FIELD_MISSING reasons; no duplicate reason codes accumulate."
+      ]
+    }
+  ],
+  "aggregate_expected": {
+    "documents_normalized": 4,
+    "normalized_records": 4,
+    "header_fields_total": 32,
+    "line_items_total": 16,
+    "successful_documents": 1,
+    "review_required_documents": 3,
+    "failed_documents": 0,
+    "field_candidates_by_document": [13, 8, 11, 6],
+    "review_reason_counts_by_document": [3, 0, 1, 5]
+  },
+  "determinism": {
+    "note": "Two passes over identical NormalizationInput objects (cell 66 §6) produce equal invoice_record_id, field_id, line_item_id and candidate_id values, and an equal canonical payload (business content with created_at/occurred_at excluded) across the two passes.",
+    "cross_document_isolation": "Every evidence_reference on every field, line item and candidate resolves to a reference_id present in that same document's own OCREvidenceIndex (never another document's); invoice_record_id, field_id, line_item_id and candidate_id are unique both within and across all four documents (cell 66 §7)."
+  },
+  "artifacts": {
+    "required_file_names": [
+      "normalization_result.json",
+      "field_candidates.json",
+      "normalized_invoice.json",
+      "normalization_event.json"
+    ],
+    "path_template": "<artifact_root>/<batch_id>/<document_id>/normalization-v1/",
+    "note": "Persisted and in-memory results must agree: result_payload.document_id/status, invoice_payload.invoice_record_id and event_payload.status/review_required must match the in-memory NormalizationResult exactly (cell 66 §8)."
+  },
+  "invalid_hash_test": {
+    "description": "A NormalizationInput with source_document_sha256 replaced by '0'*64 (batch_id/document_id unchanged) must fail closed at the Phase 4 boundary.",
+    "expected_status": "FAILED",
+    "expected_invoice_record": null,
+    "expected_event_status": "FAILED",
+    "expected_event_review_required": true,
+    "expected_error_substring": "SHA-256",
+    "expected_review_reasons": ["NORMALIZATION_FAILED"]
+  }
+}
