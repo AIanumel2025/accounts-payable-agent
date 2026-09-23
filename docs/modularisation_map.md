@@ -19,12 +19,12 @@
 | TEST_ONLY / DIAGNOSTIC_ONLY / NOTEBOOK_ORCHESTRATION | **12 / 2 / 1** (15 in total) |
 | Duplicate names | **23 names** carry **25 redefinitions**. See §3. |
 | Names whose **end-of-notebook** binding differs from the binding used when the phase was validated | **3**: `write_json_atomically`, `append_unique_reason`, `calculate_file_sha256`. See §3.2. |
-| Four invoice fixtures in the repository | **Yes (resolved at M1 close).** All four originals and the three renamed duplicate controls are in `tests/fixtures/invoices/` (added on `main` in `bc76c4e`). Manifest: `tests/fixtures/invoices/manifest.json`. See §0.1 and R-01. |
+| Four invoice fixtures in the repository | **Yes (resolved at M1 close).** The four originals are in `tests/fixtures/invoices/` (added on `main` in `bc76c4e`); the three renamed duplicate copies were removed after byte-level verification (§0.1). Manifest: `tests/fixtures/invoices/manifest.json`. See §0.1 and R-01. |
 | Existing `src/` and `tests/` scaffold | Present but every file is **0 bytes**. `pyproject.toml`, `.env.example`, `tests/golden/phase_5_expected_results.json` and the other docs are empty too. |
 
 ### 0.1 The four invoice fixtures
 
-| Source file | Dataset label (cell 22) | Expected Phase 1 disposition | Renamed exact-duplicate control |
+| Source file | Dataset label (cell 22) | Expected Phase 1 disposition | Renamed exact-duplicate control (notebook cell 22; not stored in the repo) |
 |---|---|---|---|
 | `Template1_Instance90.jpg` | FATURA | ACCEPTED | `fatura_renamed_exact_duplicate.jpg` |
 | `08181_flat_document.png` | Inv3DReal | ACCEPTED | `inv3d_renamed_exact_duplicate.png` |
@@ -40,9 +40,17 @@
 | `Template1_Instance90.jpg` | `7df0650a9eb3a4370b8236ba283195eee4bdf7bc7e884e5f4c03a7b4d997dcff` | 55284 | image/jpeg |
 | `invoice_Aaron Bergman_36258.pdf` | `2e8206cd45c73701246757a641013aac483b4d58a9ee7ac3695c6f4b167c0101` | 15813 | application/pdf |
 
-All four hashes match the notebook's recorded Phase 1 SHA-256 values: the full values for the flat and warped files, and the displayed prefixes for the other two. The three renamed duplicate controls are also committed. Each is byte-identical to its original (same SHA-256 and size), so they are not listed as separate fixtures in the manifest: `fatura_renamed_exact_duplicate.jpg` = Template, `inv3d_renamed_exact_duplicate.png` = flat, `pdf_renamed_exact_duplicate.pdf` = Aaron.
+All four hashes match the notebook's recorded Phase 1 SHA-256 values: the full values for the flat and warped files, and the displayed prefixes for the other two. The three renamed duplicate copies pushed with the fixtures (`fatura_renamed_exact_duplicate.jpg`, `inv3d_renamed_exact_duplicate.png` and `pdf_renamed_exact_duplicate.pdf`) were **removed after byte-level verification**. Before deletion, each copy's SHA-256 and size matched a declared fixture exactly, and `cmp` confirmed identical bytes:
 
-`tests/unit/test_fixture_manifest.py` (standard library only) checks the manifest: 4 entries, `fixture_count` equals the entry count, filenames and hashes are unique, entries are sorted, every declared file exists, and each file's SHA-256, size and extension match. The content review found only synthetic or public sample data (`example.net` addresses, generated names, the public "SuperStore" sample), so `contains_known_real_financial_data` is `false` for all four. No third-party licence is claimed; the status is `PROJECT_TEST_FIXTURE`.
+| Removed copy | SHA-256 | Size (bytes) | Byte-identical to |
+|---|---|---:|---|
+| `fatura_renamed_exact_duplicate.jpg` | `7df0650a9eb3a4370b8236ba283195eee4bdf7bc7e884e5f4c03a7b4d997dcff` | 55284 | `Template1_Instance90.jpg` |
+| `inv3d_renamed_exact_duplicate.png` | `4d8b79e7843f7acb42947da9ef7e2bb7d0989943ceffb7035257edfcbc156083` | 185412 | `08181_flat_document.png` |
+| `pdf_renamed_exact_duplicate.pdf` | `2e8206cd45c73701246757a641013aac483b4d58a9ee7ac3695c6f4b167c0101` | 15813 | `invoice_Aaron Bergman_36258.pdf` |
+
+Phase 1 duplicate-detection tests must create renamed byte copies at test time (for example in `tmp_path`) and must not store them as fixtures.
+
+`tests/unit/test_fixture_manifest.py` (standard library only) checks the manifest: 4 entries, `fixture_count` equals the entry count, filenames and hashes are unique, entries are sorted, every declared file exists, and each file's SHA-256, size and extension match. It also checks that every PDF, PNG, JPG or JPEG file in the directory is declared; `manifest.json` itself is excluded from that count. The content review found only synthetic or public sample data (`example.net` addresses, generated names, the public "SuperStore" sample), so `contains_known_real_financial_data` is `false` for all four. No third-party licence is claimed; the status is `PROJECT_TEST_FIXTURE`.
 
 ---
 
@@ -1427,7 +1435,7 @@ Each step is small, reviewable and reversible, and ends in a green gate. **No st
 
 | Step | Work | Needs fixtures or OCR? | Gate (must pass before the next step) |
 |---|---|---|---|
-| **M2.0 Baseline capture** | (a) ~~Commit the fixtures~~: **done** (§0.1; the 3 duplicate controls are committed too). (b) In Colab, run the notebook **from a fresh runtime, skipping diagnostic cell 46** (R-02), and record `pip freeze`, the Tesseract version, the Paddle model directory names and the Python version. (c) Export golden JSON for Phases 1–5 using the notebook's own serialisers, excluding wall-clock fields. Also export the in-memory Phase 3 results (tokens and lines per page, *after* the guard) so Phases 4–5 can replay offline. | Yes (Colab) | Golden files reviewed. Counts match §10. |
+| **M2.0 Baseline capture** | (a) ~~Commit the fixtures~~: **done** (§0.1; the renamed duplicate copies were removed and are generated at test time). (b) In Colab, run the notebook **from a fresh runtime, skipping diagnostic cell 46** (R-02), and record `pip freeze`, the Tesseract version, the Paddle model directory names and the Python version. (c) Export golden JSON for Phases 1–5 using the notebook's own serialisers, excluding wall-clock fields. Also export the in-memory Phase 3 results (tokens and lines per page, *after* the guard) so Phases 4–5 can replay offline. | Yes (Colab) | Golden files reviewed. Counts match §10. |
 | **M2.1 Packaging scaffold** | `pyproject.toml` (src layout; core deps; extras `pdf`, `ocr-tesseract`, `ocr-paddle`, `dev`); pytest markers `requires_fixtures`, `requires_tesseract`, `requires_paddle`, `slow`; empty `__init__.py` files (C-5) | No | `pip install -e .[dev]` works; `pytest` collects 0 tests without errors |
 | **M2.2 Core models + Phase 1** | `models/common.py`, `models/ingestion.py`, `exceptions.py`, `IngestionConfig`, `tools/ingestion.py` (verbatim) | No for unit tests; yes for fixture ingestion | Cells 7–8, 16–21 ported and green. Synthetic IDs equal the recorded values (§10.1). With fixtures: 7 / 4 / 3 / 4 counts, document IDs and batch ID. |
 | **M2.3 Artifact writers and serialisers** | `artifacts/filesystem.py`, `artifacts/serialization.py`, both JSON writer formats kept distinct | No | Byte-golden tests for every writer: a payload containing `€`, `Decimal`, `UUID`, `Path`, `date` and a nested dataclass must reproduce the exact bytes of @26, @63 and @73 (tmp-file naming included) |
