@@ -31,6 +31,7 @@ __all__ = [
     "IngestionValidationError",
     "NormalizationIntegrityError",
     "FinancialValidationIntegrityError",
+    "MatchingIntegrityError",
 ]
 
 
@@ -74,6 +75,25 @@ class FinancialValidationIntegrityError(Exception):
     result for the expected batch and document (M6 task §3), or when Phase
     5 artifact persistence detects a different-bytes collision on rerun
     (M6 task §16). Fail closed: the caller must not proceed."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class MatchingIntegrityError(Exception):
+    """Raised when the Phase 4/5 -> Phase 6 bridge cannot verify that the
+    normalized invoice and financial-validation result it was given belong
+    to the same batch, document and source bytes (M7 task §3.G), or when
+    Phase 6 artifact persistence detects a different-bytes collision on
+    rerun (M7 task §5.I). Fail closed: the caller must not proceed to
+    matching. The notebook's own `build_matching_input` (cell 82) and
+    `write_text_idempotently` (cell 82) raised bare `ValueError`/
+    `RuntimeError` for these cases; this mirrors the
+    `NormalizationIntegrityError`/`FinancialValidationIntegrityError`
+    precedent of upgrading them to a structured exception without changing
+    which cases fail."""
 
     def __init__(self, reason: str, details: dict[str, Any] | None = None):
         super().__init__(reason)

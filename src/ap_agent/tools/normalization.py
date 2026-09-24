@@ -70,6 +70,18 @@ definition table §2 `tools/normalization.py`; modularisation map §3.2):
     its `write_json_atomically` moved to `ap_agent.artifacts.filesystem` as
     `write_json_safe_atomically` (distinct name from the Phase 2/3 writer —
     decision D-8, §3.2).
+  - Cell 62 ("PHASE 4 — CORRECTION CELL 4C", M7 task §3): the active,
+    final `value_is_compatible` — overrides cell 60's PURCHASE_ORDER_NUMBER
+    branch by first accepting any explicitly labelled purchase-order
+    identifier (`is_explicit_purchase_order_identifier` /
+    `SHORT_PO_IDENTIFIER_PATTERN`, e.g. `"99"`, `"#1042"`), then falling back
+    to cell 60's `PURCHASE_ORDER_PATTERN` check for every other field. The
+    correction only loosens the *value*-compatibility check; a raw value
+    only ever reaches it once `extract_labelled_text_candidates` /
+    `extract_inline_candidates` / `extract_spatial_candidates` have already
+    matched it against a PO label in `FIELD_LABELS`, so an unlabelled bare
+    number elsewhere on the page never becomes a PURCHASE_ORDER_NUMBER
+    candidate in the first place.
 
 Explicit configuration (task §6; decisions D-11, R-05). The notebook read a
 single hidden global `normalization_config` from 11 call sites (map §5.1).
@@ -923,12 +935,36 @@ def normalize_candidate_value(
 
 PURCHASE_ORDER_PATTERN = re.compile(r"[A-Z0-9][A-Z0-9\-/]{3,}", flags=re.IGNORECASE)
 
+SHORT_PO_IDENTIFIER_PATTERN = re.compile(
+    r"^(?=.*\d)[A-Z0-9][A-Z0-9/#\-]{0,63}$", flags=re.IGNORECASE
+)
+
+
+def is_explicit_purchase_order_identifier(raw_value: str) -> bool:
+    """Accept explicitly labelled short purchase-order identifiers such as
+    "99" or "#1042" alongside longer identifiers (notebook cell 62,
+    "PHASE 4 — CORRECTION CELL 4C"). This only classifies a *value*'s shape;
+    it never decides on its own whether a value is PO-labelled, so it does
+    not by itself allow an unlabelled bare number to become a
+    PURCHASE_ORDER_NUMBER candidate (see the module docstring)."""
+
+    cleaned_value = clean_ocr_text(raw_value).strip()
+    cleaned_value = re.sub(r"^[\s:#]+", "", cleaned_value).strip()
+
+    if not cleaned_value:
+        return False
+
+    if len(cleaned_value) > 64:
+        return False
+
+    return bool(SHORT_PO_IDENTIFIER_PATTERN.fullmatch(cleaned_value))
+
 
 def value_is_compatible(
     field_name: InvoiceFieldName, raw_value: str, *, config: NormalizationConfig
 ) -> bool:
-    """Final, active field-compatibility check (notebook cell 60, overrides
-    cell 55)."""
+    """Final, active field-compatibility check (notebook cell 60, overridden
+    for PURCHASE_ORDER_NUMBER by cell 62's short-identifier correction)."""
 
     cleaned_value = clean_ocr_text(raw_value)
 
@@ -945,6 +981,9 @@ def value_is_compatible(
         return normalize_invoice_number_value(cleaned_value) is not None
 
     if field_name == InvoiceFieldName.PURCHASE_ORDER_NUMBER:
+        if is_explicit_purchase_order_identifier(raw_value):
+            return True
+
         if normalize_date_value(cleaned_value) is not None:
             return False
 

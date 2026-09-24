@@ -1,0 +1,74 @@
+[
+  {
+    "purchase_order_id": "PO-ID-00099",
+    "purchase_order_number": "99",
+    "supplier_id": "SUP-002",
+    "currency": "EUR",
+    "order_date": "2000-04-01",
+    "total_amount": "858.86",
+    "lines": [
+      {
+        "line_number": 1,
+        "description": "Sit sit together.",
+        "quantity": "3.00",
+        "unit_price": "50.47",
+        "line_total": "151.41",
+        "item_code": null
+      },
+      {
+        "line_number": 2,
+        "description": "Maybe religious several.",
+        "quantity": "2.00",
+        "unit_price": "7.15",
+        "line_total": "14.30",
+        "item_code": null
+      },
+      {
+        "line_number": 3,
+        "description": "Green military listen.",
+        "quantity": "6.00",
+        "unit_price": "34.69",
+        "line_total": "208.14",
+        "item_code": null
+      },
+      {
+        "line_number": 4,
+        "description": "Course eight.",
+        "quantity": "2.00",
+        "unit_price": "36.33",
+        "line_total": "72.66",
+        "item_code": null
+      },
+      {
+        "line_number": 5,
+        "description": "Cost number world.",
+        "quantity": "5.00",
+        "unit_price": "82.47",
+        "line_total": "412.35",
+        "item_code": null
+      }
+    ],
+    "state": "OPEN",
+    "requires_goods_receipt": true
+  },
+  {
+    "purchase_order_id": "PO-ID-CA-2012-AB10015140-40974",
+    "purchase_order_number": "CA-2012-AB10015140-40974",
+    "supplier_id": "SUP-003",
+    "currency": "USD",
+    "order_date": "2012-03-01",
+    "total_amount": "48.71",
+    "lines": [
+      {
+        "line_number": 1,
+        "description": "Global Push Button Manager's Chair, Indigo",
+        "quantity": "1",
+        "unit_price": "48.71",
+        "line_total": "48.71",
+        "item_code": "FUR-CH-4421"
+      }
+    ],
+    "state": "OPEN",
+    "requires_goods_receipt": true
+  }
+]

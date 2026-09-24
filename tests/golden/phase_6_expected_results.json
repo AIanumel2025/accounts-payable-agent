@@ -1,0 +1,141 @@
+{
+  "golden_baseline_version": "1.0",
+  "source": "notebooks/accounts_payable_pipeline.ipynb cell 83 (\"PHASE 6 — CELL 6\", 'Final matching validation'), cross-checked against docs/m7_phase_6_reference_matching_report.md and the M7 task brief.",
+  "purpose": "Phase 6 supplier/purchase-order/goods-receipt matching parity baseline for the four controlled fixtures declared in tests/fixtures/invoices/manifest.json, matched against the controlled prototype reference data in tests/fixtures/reference_data/ (suppliers.json, purchase_orders.json, goods_receipts.json), run through Phase 1 -> Phase 2 -> Phase 3 (PaddleOCR primary) -> Phase 4 -> Phase 5 -> Phase 6.",
+  "environment_note": "Recovered directly from the notebook's own final Phase 6 validation cell (cell 83), which asserts these exact values against the notebook's own validated Phase 6 run. Not independently re-verified against a live PaddleOCR run in this milestone's sandbox for the same network-egress reason documented in tests/golden/phase_3_expected_results.json. The `requires_paddle`-marked integration test in tests/integration/test_phase_1_to_6_pipeline.py must be run once network access is available; until then this file is the notebook-recovered semantic baseline. A fast, non-Paddle equivalent (tests/unit/test_matching_golden_baseline.py) reconstructs the same four documents' Phase 4/5 outputs synthetically from this file's own numbers (and tests/golden/phase_4_expected_results.json / phase_5_expected_results.json) so the Phase 6 matching logic itself is verified on every test run, independent of OCR provider availability.",
+  "config": {
+    "note": "matching_config (notebook cell 77): MatchingConfig with every field at its dataclass default (matching_version='matching-v1', monetary_quantization=Decimal('0.01'), quantity_quantization=Decimal('0.0001'), price_tolerance=Decimal('0.01'), quantity_tolerance=Decimal('0.0001'), total_tolerance=Decimal('0.01'), supplier_match_threshold=Decimal('0.90'), supplier_ambiguity_margin=Decimal('0.05'), maximum_supplier_candidates=5).",
+    "matching_version": "matching-v1"
+  },
+  "documents": [
+    {
+      "filename": "Template1_Instance90.jpg",
+      "status": "REVIEW_REQUIRED",
+      "supplier": "NOT_FOUND",
+      "supplier_id": null,
+      "purchase_order": "MATCHED",
+      "po_number": "99",
+      "goods_receipt": "MATCHED",
+      "match_mode": "THREE_WAY",
+      "line_matches": 5,
+      "checks_passed": 4,
+      "checks_failed": 0,
+      "review_checks": 2,
+      "checks_skipped": 0,
+      "required_reasons": [
+        "SUPPLIER_NAME_MISSING",
+        "INVOICE_LINE_TOTAL_MISSING",
+        "INHERITED_FINANCIAL_VALIDATION_REVIEW"
+      ],
+      "expected_total": "858.86",
+      "observed_total": "858.86",
+      "total_variance": "0.00",
+      "goods_receipt_ids_count": 1,
+      "notes": [
+        "Supplier remains unresolved (non-inference safeguard: a matched PO must not imply a supplier match).",
+        "All 5 line matches have observed_line_total is None (Phase 4's own line items have no amount) and line_total_status REVIEW_REQUIRED."
+      ]
+    },
+    {
+      "filename": "08181_flat_document.png",
+      "status": "SUCCEEDED",
+      "supplier": "MATCHED",
+      "supplier_id": "SUP-001",
+      "purchase_order": "NOT_REFERENCED",
+      "po_number": null,
+      "goods_receipt": "NOT_REFERENCED",
+      "match_mode": "UNDETERMINED",
+      "line_matches": 0,
+      "checks_passed": 1,
+      "checks_failed": 0,
+      "review_checks": 0,
+      "checks_skipped": 5,
+      "required_reasons": [],
+      "expected_total": null,
+      "observed_total": null,
+      "total_variance": null,
+      "goods_receipt_ids_count": 0,
+      "notes": ["No PURCHASE_ORDER_NUMBER on this invoice: NOT_REFERENCED, distinct from a missing referenced PO (NOT_FOUND)."]
+    },
+    {
+      "filename": "invoice_Aaron Bergman_36258.pdf",
+      "status": "REVIEW_REQUIRED",
+      "supplier": "NOT_FOUND",
+      "supplier_id": null,
+      "purchase_order": "MATCHED",
+      "po_number": "CA-2012-AB10015140-40974",
+      "goods_receipt": "MATCHED",
+      "match_mode": "THREE_WAY",
+      "line_matches": 1,
+      "checks_passed": 5,
+      "checks_failed": 0,
+      "review_checks": 1,
+      "checks_skipped": 0,
+      "required_reasons": [
+        "SUPPLIER_NAME_MISSING",
+        "INHERITED_FINANCIAL_VALIDATION_REVIEW"
+      ],
+      "expected_total": "48.71",
+      "observed_total": "48.71",
+      "total_variance": "0.00",
+      "goods_receipt_ids_count": 1,
+      "notes": ["Supplier remains unresolved even though the PO's own supplier is SUP-003 (non-inference safeguard)."]
+    },
+    {
+      "filename": "08181_warped_document_perspective_shadow.jpg",
+      "status": "REVIEW_REQUIRED",
+      "supplier": "MATCHED",
+      "supplier_id": "SUP-001",
+      "purchase_order": "NOT_REFERENCED",
+      "po_number": null,
+      "goods_receipt": "NOT_REFERENCED",
+      "match_mode": "UNDETERMINED",
+      "line_matches": 0,
+      "checks_passed": 1,
+      "checks_failed": 0,
+      "review_checks": 0,
+      "checks_skipped": 5,
+      "required_reasons": ["INHERITED_FINANCIAL_VALIDATION_REVIEW"],
+      "expected_total": null,
+      "observed_total": null,
+      "total_variance": null,
+      "goods_receipt_ids_count": 0,
+      "notes": ["Review required solely from the inherited Phase 5 review state; Phase 6's own checks pass/skip only."]
+    }
+  ],
+  "aggregate_expected": {
+    "invoices_processed": 4,
+    "successful_invoices": 1,
+    "review_required_invoices": 3,
+    "failed_production_invoices": 0,
+    "three_way_matches": 2,
+    "line_matches_total": 6,
+    "checks_performed_per_document": 6
+  },
+  "reference_snapshot_expected": {
+    "Template1_Instance90.jpg": {"supplier_id": null, "po_number": "99", "receipt_count": 1},
+    "08181_flat_document.png": {"supplier_id": "SUP-001", "po_number": null, "receipt_count": 0},
+    "invoice_Aaron Bergman_36258.pdf": {"supplier_id": null, "po_number": "CA-2012-AB10015140-40974", "receipt_count": 1},
+    "08181_warped_document_perspective_shadow.jpg": {"supplier_id": "SUP-001", "po_number": null, "receipt_count": 0}
+  },
+  "determinism": {
+    "note": "Two passes over identical MatchingInput objects (cell 83) produce an equal matching_result_id and equal line_match_id values, and an equal canonical payload (business content with occurred_at excluded) across the two passes.",
+    "cross_document_isolation": "matching_result_id and line_match_id are unique both within and across all four documents; a document's persisted reference_snapshot.json contains only the supplier/PO/goods-receipts it actually resolved, never another document's."
+  },
+  "artifacts": {
+    "required_file_names": [
+      "matching_result.json",
+      "matching_event.json",
+      "line_matches.jsonl",
+      "reference_snapshot.json",
+      "manifest.json"
+    ],
+    "path_template": "<artifact_root>/<batch_id>/<document_id>/matching-v1/",
+    "note": "Persisted and in-memory results must agree: matching_result.json's status/review_required and matching_event.json's status/review_required must match the in-memory MatchingResult exactly (cell 83). The manifest file is named manifest.json (notebook-verbatim), not artifact_manifest.json (Phase 5's own name) -- a documented, deliberate naming choice (docs/m7_phase_6_reference_matching_report.md)."
+  },
+  "invalid_hash_test": {
+    "description": "A FinancialValidationResult with source_document_sha256 replaced by '0'*64 (batch_id/document_id unchanged) must fail closed at the Phase 6 boundary (notebook cell 83's own tamper test).",
+    "expected_error_substring": "source hashes differ",
+    "expected_exception": "MatchingIntegrityError"
+  }
+}
