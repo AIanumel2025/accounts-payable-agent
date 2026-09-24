@@ -356,23 +356,110 @@ map and the task brief's own §13 exactly.
 **Real Phase 1 → 2 → 3 → 4 integration result.** The full pipeline runs
 end-to-end against all four real fixtures with the Tesseract fallback
 forced (`test_phase_1_to_4_pipeline_integrity_on_all_four_fixtures`,
-network-free, **passing** in this sandbox): SHA-256 continuity, stable
-IDs, the typed bridge, cross-document evidence isolation and
-persisted/in-memory agreement are all verified against real OCR output
-(not synthetic contracts). The PaddleOCR-primary semantic-parity test
-(`test_phase_1_to_4_pipeline_final_statuses_match_the_semantic_golden_baseline`,
-`requires_paddle`) is written and would assert the exact table above, plus
-"no Tesseract fallback occurred" and the aggregate/determinism checks —
-but per §14 (failure policy) below, it could not be executed in this
-sandbox for the same reason M4's equivalent test could not: every
-PaddleOCR model-hosting platform is blocked at this environment's egress
-proxy (confirmed again for M5: `paddleocr`/`paddlepaddle` install cleanly
-from PyPI, but `create_engine(...)` hangs rather than completing or
-raising within any reasonable timeout, exactly like the pre-existing M4
-`requires_paddle` test under the same conditions — not a regression
-introduced here). `tests/golden/phase_4_expected_results.json` therefore
-remains a notebook-recovered baseline, not independently re-verified
-against a live PaddleOCR run in this milestone.
+network-free, **passing**): SHA-256 continuity, stable IDs, the typed
+bridge, cross-document evidence isolation and persisted/in-memory
+agreement are all verified against real OCR output (not synthetic
+contracts).
+
+**Network blocker resolved; PaddleOCR-primary parity independently
+reproduced (2026-09-23, "PaddleOCR Validation" cloud environment,
+`env_015buLqMJx2Ewgsy3RnWZ32N`).** The egress proxy in this environment
+still denies `paddleocr.bj.bcebos.com` and `aistudio.baidu.com` (403 /
+connection reset), but `huggingface.co` and `modelscope.cn` are reachable,
+and PaddleX 3.7.2's default model source (`PADDLE_PDX_MODEL_SOURCE`,
+unset) already resolves to `huggingface` — no application code or
+provider-routing change was needed. `paddleocr==3.7.0` /
+`paddlepaddle==3.3.1` (the exact pins in `pyproject.toml`'s `ocr-paddle`
+extra) were installed, and `ap_agent.adapters.paddleocr_adapter.create_engine`
+(unmodified) built a real local `PaddleOCR` engine, downloading:
+
+| Model | Role | Source |
+|---|---|---|
+| `PaddlePaddle/UVDoc` | doc unwarping | `huggingface.co` |
+| `PaddlePaddle/PP-LCNet_x1_0_textline_ori` | textline orientation | `huggingface.co` |
+| `PaddlePaddle/PP-OCRv6_medium_det` | text detection | `huggingface.co` |
+| `PaddlePaddle/PP-OCRv6_medium_rec` | text recognition | `huggingface.co` |
+
+(plus `paddle-model-ecology.bj.bcebos.com/paddlex/PaddleX3.0/fonts/{simfang,PingFang-SC-Regular}.ttf`,
+visualization-only font assets, not model weights). All four files cached
+under `/root/.paddlex/official_models/` and `~/.paddlex/fonts/` —
+**outside the repository**; nothing was committed (`git status` verified
+clean after every run).
+
+`pytest -m requires_paddle -vv` — **4 passed, 0 skipped, 0 failed**:
+
+- `test_real_paddleocr_run_matches_the_semantic_golden_baseline` (Phase 3)
+- `test_real_paddleocr_uses_paddle_on_every_fixture_page` (Phase 3)
+- `test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline`
+- `test_phase_1_to_4_pipeline_final_statuses_match_the_semantic_golden_baseline`
+
+One transient flake was observed and resolved, not patched around: on the
+very first cold run, `test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline`
+failed (`OCRStatus.FAILED` on `Template1_Instance90.jpg`) while PaddleOCR's
+first-ever `predict()` call in the session was concurrently downloading
+the visualization font assets above from `paddle-model-ecology.bj.bcebos.com`
+— a host this environment's proxy answers inconsistently (a bare-path
+`curl` probe returned 403, but the actual asset paths used during the run
+succeeded). Because `pytesseract`/`tesseract-ocr` were not yet installed
+in this session at that point, the automatic Tesseract fallback also
+failed immediately, surfacing as a full `OCRStatus.FAILED` rather than a
+semantic mismatch. Reproducing the identical call once the fonts were
+cached (and once `pytesseract`/`tesseract-ocr 5.3.4` were installed)
+produced `OCRStatus.SUCCEEDED` with zero errors, and a subsequent clean
+`pytest -m requires_paddle -vv` run passed all four tests with no
+retries, no code changes and no golden-file edits. This is recorded as an
+observed transient-network characteristic of this environment, not a
+defect in `src/`.
+
+**Four-fixture normalization table (real PaddleOCR primary provider, no
+Tesseract fallback on any page)** — matches
+`tests/golden/phase_4_expected_results.json` and this report's §13 table
+exactly, independently reproduced:
+
+| File | Phase 3 provider | Phase 4 status | Header fields | Line items | Invoice # | Invoice date | Currency | Subtotal | Tax | Total | Supplier |
+|---|---|---|---:|---:|---|---|---|---|---|---|---|
+| Template1_Instance90.jpg | paddleocr | REVIEW_REQUIRED | 8 | 5 | missing | 2000-04-12 | EUR | 858.86 | 36.45 | 873.58 | missing |
+| 08181_flat_document.png | paddleocr | SUCCEEDED | 8 | 5 | 308044 | 2002-06-28 | USD | 63.45 | 5.77 | 69.22 | Snyder, Hammond and Anderson |
+| invoice_Aaron Bergman_36258.pdf | paddleocr | REVIEW_REQUIRED | 10 | 1 | 36258 | 2012-03-06 | USD | 48.71 | – | 50.10 | missing |
+| 08181_warped_…jpg | paddleocr | REVIEW_REQUIRED | 6 | 5 | 308044 | 2002-06-28 | missing | 63.45 | 5.77 | **missing** | Snyder, Hammond and Anderson |
+
+The warped invoice's `TOTAL_AMOUNT` field is confirmed `None` in the real
+run (`69.22` never appears there); `CRITICAL_TOTAL_VALUE_MISSING` and the
+`INHERITED_OCR_*` reasons propagate as expected.
+
+**Provider-routing totals (real run):** 4/4 pages routed to `paddleocr`
+(`ocr_result.pages[*].ocr_engine == "paddleocr"` for every fixture); 0
+Tesseract-fallback pages in the primary parity run.
+
+**Aggregate (real run, matches golden and task brief exactly):** 4
+documents normalized, 4 records, 32 header fields, 16 line items, 1
+SUCCEEDED, 3 REVIEW_REQUIRED, 0 FAILED.
+
+**Integrity and isolation (real run, all independently verified):**
+SHA-256 continuity Phase 1→4, stable batch/document IDs across all
+phases, correct OCR-result-to-normalization-input association
+(`normalization_input.ocr_result is ocr_result`), every evidence
+reference on every field/line-item/candidate resolves only within its
+own document's `OCREvidenceIndex`, no document ID leaks into another
+document's artifact tree, persisted Phase 4 JSON equals the in-memory
+result on every field checked, and deterministic `invoice_record_id`
+values reproduce across a clean rerun of the same `NormalizationInput`.
+Bounding-box-within-image-dimensions was independently re-verified with
+`verify_page_evidence_within_image_bounds` against the real Phase 3
+evidence images for all four fixtures (token counts: 49 / 52 / 35 / 52,
+matching `tests/golden/phase_3_expected_results.json`'s diagnostic
+reference counts exactly) — all within bounds.
+
+`tests/golden/phase_4_expected_results.json` and
+`tests/golden/phase_3_expected_results.json` are therefore no longer only
+a notebook-recovered baseline for this milestone: their semantic fields
+(status, provider, header/line-item counts, field values, review reasons,
+aggregate) are now independently reproduced against a live local
+PaddleOCR run in this environment. Neither golden file was edited to
+reach this result.
+
+**Full regression:** `pytest -vv` — **396 passed, 0 skipped, 0 failed**
+(no tests added or removed this session).
 
 ## 14. Failure policy applied
 
@@ -407,10 +494,27 @@ its active notebook cell (§2/§3 above).
 
 ## 16. Complete test results
 
+Original network-blocked baseline for this milestone (kept for record):
+
 ```
 pytest -q -m "not requires_paddle"
 392 passed, 4 deselected in ~76s
 ```
+
+**Updated (2026-09-23, PaddleOCR Validation cloud environment), with real
+network access to `huggingface.co`:**
+
+```
+pytest -m requires_paddle -vv
+4 passed, 0 skipped, 0 failed in 722.06s
+
+pytest -vv
+396 passed, 0 skipped, 0 failed in 809.88s
+```
+
+No `requires_paddle` test is deselected, skipped or unexecuted in this
+run. No tests were added or removed; the 396-test total is unchanged from
+`392 passed + 4 requires_paddle`.
 
 New in M5 (94 tests across five files, all passing):
 - `tests/unit/test_normalization_tools.py` — 39 tests (text/number/date/
@@ -448,8 +552,13 @@ import cleanly with all eight blocked).
 
 ## 17. Unresolved risks
 
-- PaddleOCR-primary semantic parity for Phase 4 (§13) is written but
-  unexecuted in this sandbox, inherited unchanged from M4's own R-07/blocker.
+- ~~PaddleOCR-primary semantic parity for Phase 4 (§13) is written but
+  unexecuted in this sandbox~~ — **resolved 2026-09-23**: independently
+  executed and passing against a real local PaddleOCR engine in the
+  "PaddleOCR Validation" cloud environment (§13). M4's equivalent Phase 3
+  blocker (R-07) is resolved the same way, in the same session
+  (`tests/golden/phase_3_expected_results.json`'s `requires_paddle` tests
+  also pass for real now).
 - R-11 (fixture-motivated heuristics — `GSTIN`, `ORDER ID`,
   `OTHER_FIELD_LABEL_MARKERS`, the due-date direction rule,
   `ITEM_CODE_PATTERN`, `(-)` sign handling) is unchanged from the
@@ -472,9 +581,26 @@ notebook's own cell-66 assertions exactly; the real Tesseract-forced
 integration run passes end-to-end; and every unit/integration test this
 milestone added passes, alongside all pre-existing M1–M4 tests.
 
-**Modularising Phase 5 (financial validation) is safe to begin.**
-`build_validation_input` (notebook cell 69) already consumes exactly the
-`NormalizationResult`/`NormalizedInvoiceRecord` shape this milestone
-produces and persists; the Phase 4 `append_unique_reason` binding is kept
-separate from the Phase 5 binding per D-9, ready for Phase 5 to extract
-its own version under its own name without collision.
+**Final merge-readiness conclusion (2026-09-23 update).** The one
+remaining open item from the original readiness assessment — independent
+execution of the `requires_paddle` semantic-parity tests against a real
+PaddleOCR engine — is now closed: all four required tests
+(`test_real_paddleocr_run_matches_the_semantic_golden_baseline`,
+`test_real_paddleocr_uses_paddle_on_every_fixture_page`,
+`test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline`,
+`test_phase_1_to_4_pipeline_final_statuses_match_the_semantic_golden_baseline`)
+pass for real, with 0 skipped and 0 deselected in the acceptance run, and
+the full 396-test suite passes with 0 skipped/0 failed. No golden file and
+no `src/` module was modified to reach this result. **M5 is now safe to
+merge**, with no known unexecuted required test remaining. (Per this
+session's task brief, PR #5 itself is intentionally left open, not
+merged, by this milestone's own process.)
+
+**Modularising Phase 5 (financial validation) is safe to begin — not
+started in this session.** `build_validation_input` (notebook cell 69)
+already consumes exactly the `NormalizationResult`/`NormalizedInvoiceRecord`
+shape this milestone produces and persists; the Phase 4
+`append_unique_reason` binding is kept separate from the Phase 5 binding
+per D-9, ready for Phase 5 to extract its own version under its own name
+without collision. This session did not begin Phase 5 extraction or
+financial-validation work, per its own scope.
