@@ -62,6 +62,8 @@ __all__ = [
     "ocr_event_to_dict",
     "ocr_document_result_to_dict",
     "convert_to_json_safe",
+    "canonical_decimal_text",
+    "phase_5_json_safe",
 ]
 
 
@@ -387,3 +389,77 @@ def convert_to_json_safe(value: Any) -> Any:
         return [convert_to_json_safe(item) for item in value]
 
     return value
+
+
+# ---------------------------------------------------------
+# Phase 5 (financial validation) serialisers
+# ---------------------------------------------------------
+
+
+def canonical_decimal_text(value: Decimal | None) -> str | None:
+    """Convert a Decimal into stable, non-scientific text (notebook cell 69,
+    "PHASE 5 — CELL 2"). Used for every audit-text operand and for
+    `expected_value`/`observed_value` on a `ValidationCheckResult`, so a
+    Phase 5 monetary value round-trips through JSON exactly as it reads
+    (`format(value, "f")`, never `str(value)`, which can fall back to
+    scientific notation for extreme exponents)."""
+
+    if value is None:
+        return None
+
+    return format(value, "f")
+
+
+def phase_5_json_safe(value: Any) -> Any:
+    """Convert Phase 5 objects into deterministic JSON-safe data (notebook
+    cell 73, "PHASE 5 — CELL 6").
+
+    Distinct from `convert_to_json_safe` above (Phase 4's converter): this
+    is the Phase 5 byte format used by `write_json_atomic`/
+    `write_jsonl_atomic` (`ap_agent.artifacts.filesystem`) --- branch order,
+    `Decimal` handling (`canonical_decimal_text`, not `str`), `set` handling
+    (sorted into a list) and the `TypeError` fail-closed branch for any
+    unsupported type are all verbatim from the notebook's own converter, and
+    must not be merged with `convert_to_json_safe` (D-8-style policy: two
+    behaviourally distinct converters, kept under distinct names)."""
+
+    if value is None:
+        return None
+
+    if isinstance(value, Enum):
+        return value.value
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if isinstance(value, Decimal):
+        return canonical_decimal_text(value)
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    if isinstance(value, date):
+        return value.isoformat()
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if is_dataclass(value):
+        return {
+            dataclass_field.name: phase_5_json_safe(getattr(value, dataclass_field.name))
+            for dataclass_field in fields(value)
+        }
+
+    if isinstance(value, dict):
+        return {str(key): phase_5_json_safe(item) for key, item in value.items()}
+
+    if isinstance(value, (tuple, list)):
+        return [phase_5_json_safe(item) for item in value]
+
+    if isinstance(value, set):
+        return sorted(phase_5_json_safe(item) for item in value)
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    raise TypeError(f"Unsupported Phase 5 serialization type: {type(value).__name__}")

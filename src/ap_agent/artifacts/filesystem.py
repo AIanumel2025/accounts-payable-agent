@@ -34,7 +34,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ap_agent.artifacts.serialization import convert_to_json_safe
+from ap_agent.artifacts.serialization import convert_to_json_safe, phase_5_json_safe
 
 if TYPE_CHECKING:
     import numpy as np
@@ -47,6 +47,9 @@ __all__ = [
     "write_text_atomically",
     "save_pil_image_atomically",
     "write_json_safe_atomically",
+    "write_text_atomic",
+    "write_json_atomic",
+    "write_jsonl_atomic",
 ]
 
 
@@ -173,3 +176,57 @@ def write_json_safe_atomically(
     )
 
     temporary_path.replace(destination)
+
+
+def write_text_atomic(destination: Path, content: str) -> None:
+    """Phase 5 text writer (notebook cell 73, "PHASE 5 — CELL 6").
+
+    Distinct temporary-file naming from `write_text_atomically` above
+    (dot-prefixed `.{name}.tmp` rather than a `.tmp`-suffixed sibling): kept
+    verbatim from the notebook rather than consolidated, since task §1
+    requires preserving the validated implementation exactly, not just its
+    externally observable result.
+    """
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    temporary_path = destination.parent / f".{destination.name}.tmp"
+
+    temporary_path.write_text(content, encoding="utf-8")
+
+    temporary_path.replace(destination)
+
+
+def write_json_atomic(destination: Path, payload: Any) -> None:
+    """Write formatted deterministic JSON atomically (notebook cell 73).
+
+    The Phase 5 byte format: `phase_5_json_safe`, sorted keys, a trailing
+    newline. Distinct from both `write_json_atomically` (Phase 2/3) and
+    `write_json_safe_atomically` (Phase 4) --- three behaviourally
+    different writers kept under three distinct names (D-8 policy).
+    """
+
+    json_content = json.dumps(
+        phase_5_json_safe(payload),
+        indent=2,
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+    write_text_atomic(destination, json_content + "\n")
+
+
+def write_jsonl_atomic(destination: Path, records: tuple[Any, ...]) -> None:
+    """Write one JSON object per line atomically (notebook cell 73)."""
+
+    json_lines = [
+        json.dumps(phase_5_json_safe(record), sort_keys=True, ensure_ascii=False)
+        for record in records
+    ]
+
+    content = "\n".join(json_lines)
+
+    if json_lines:
+        content += "\n"
+
+    write_text_atomic(destination, content)
