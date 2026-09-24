@@ -398,6 +398,36 @@ end to end against all four real fixtures, twice:
    policy now permits PaddleOCR model downloads and that the Phase 4
    golden baseline holds against a live run too.
 
+**Final M6 acceptance run (post-merge with `origin/main`'s M5 PaddleOCR
+corrections, PR #6).** All five `requires_paddle` tests in the repository
+were run together, and then the entire suite was run with no marker
+exclusion at all:
+
+```
+pytest -m requires_paddle -vv
+5 passed, 488 deselected in 810.44s (0:13:30)
+
+pytest -vv -m "requires_paddle or not requires_paddle"
+493 passed in 887.14s (0:14:47)
+```
+
+Zero skipped, zero deselected and zero failed in the second (full,
+unfiltered) run -- every test in the repository executed and passed in a
+single acceptance pass. The five `requires_paddle` tests together cover
+every required real-PaddleOCR parity dimension:
+
+| Test | Confirms |
+|---|---|
+| `tests/integration/test_phase_3_ocr.py::test_real_paddleocr_run_matches_the_semantic_golden_baseline` | Phase 3 PaddleOCR semantic parity against `tests/golden/phase_3_expected_results.json` |
+| `tests/integration/test_phase_3_ocr.py::test_real_paddleocr_uses_paddle_on_every_fixture_page` | Every fixture page routes to `paddleocr` (4 PaddleOCR pages, one per fixture) and `fallback_pages == 0` (zero Tesseract fallback), per `tests/golden/phase_3_expected_results.json`'s `aggregate_expected.tesseract_fallback_pages == 0` |
+| `tests/integration/test_phase_1_to_3_pipeline.py::test_phase_1_to_3_pipeline_final_statuses_match_the_semantic_golden_baseline` | Phase 1->3 pipeline parity, PaddleOCR primary |
+| `tests/integration/test_phase_1_to_4_pipeline.py::test_phase_1_to_4_pipeline_final_statuses_match_the_semantic_golden_baseline` | Phase 1->4 normalization parity against `tests/golden/phase_4_expected_results.json` |
+| `tests/integration/test_phase_1_to_5_pipeline.py::test_phase_1_to_5_pipeline_final_statuses_match_the_semantic_golden_baseline` | Phase 1->5 financial-validation parity against `tests/golden/phase_5_expected_results.json` (this milestone's own acceptance test) |
+
+No `src/` behaviour was changed to reach this result; no golden file was
+edited; no test was added, removed or reweakened between the earlier
+individually-run passes (§14 above) and this combined acceptance run.
+
 ## 15. Deviations from the notebook (documented, not silently changed)
 
 1. **Typed bridge with integrity verification** (§4) -- `build_validation_input`
@@ -424,7 +454,16 @@ PaddleOCR-primary run (§14) and by 96 new unit/integration tests.
 ```
 pytest -q -m "not requires_paddle"
 488 passed, 5 deselected in ~133s
+
+pytest -m requires_paddle -vv
+5 passed, 488 deselected in 810.44s (0:13:30)
+
+pytest -vv -m "requires_paddle or not requires_paddle"
+493 passed in 887.14s (0:14:47)
 ```
+
+The last of these is the final M6 acceptance run (§14): the complete
+493-test suite, every marker included, 0 skipped, 0 deselected, 0 failed.
 
 New in M6 (96 tests across five files, all passing):
 - `tests/unit/test_financial_validation_tools.py` -- 49 tests (Decimal
@@ -457,14 +496,14 @@ New in M6 (96 tests across five files, all passing):
 
 `tests/unit/test_financial_validation.py` (24 pre-existing M2 contract
 tests) is unmodified and still passes unchanged. All M1-M5 tests remain
-passing; no required test is skipped or deselected in this milestone's
-acceptance run beyond the pre-existing, environment-gated `requires_paddle`
-marker (which itself passed when run explicitly, §14). Compliance checks
-re-run for M6: no production module contains any fixture filename or
-expected fixture total; no source module imports the notebook; package
-import with `paddle`/`paddleocr`/`pytesseract`/`pymupdf`/`cv2`/`numpy`/
-`PIL`/`pandas`/`matplotlib`/`IPython` blocked at the import hook still
-succeeds for every M1-M6 module.
+passing. In the final acceptance run (§14), **no test is skipped or
+deselected at all** -- the complete 493-test suite, `requires_paddle`
+included, passes in one unfiltered run. Compliance checks re-run for M6:
+no production module contains any fixture filename or expected fixture
+total; no source module imports the notebook; package import with
+`paddle`/`paddleocr`/`pytesseract`/`pymupdf`/`cv2`/`numpy`/`PIL`/`pandas`/
+`matplotlib`/`IPython` blocked at the import hook still succeeds for every
+M1-M6 module.
 
 ## 17. Unresolved risks
 
@@ -474,11 +513,12 @@ succeeds for every M1-M6 module.
 - R-11 (fixture-motivated heuristics in Phase 4) is unchanged and out of
   M6's scope; Phase 5 consumes whatever Phase 4 produces without
   reinterpreting it.
-- The `requires_paddle` integration test now depends on this sandbox's
-  ability to reach a PaddleOCR model-hosting platform, which succeeded
-  during this milestone but is not guaranteed in every environment (R-07);
-  the test remains correctly marked so CI can skip it where network access
-  is unavailable.
+- The `requires_paddle` tests depend on the environment's ability to reach
+  a PaddleOCR model-hosting platform, which succeeded throughout this
+  milestone, including the final combined acceptance run (§14/§16) --
+  5/5 `requires_paddle` tests passed with 0 skipped -- but is not
+  guaranteed in every environment (R-07); the tests remain correctly
+  marked so CI can skip them where network access is unavailable.
 
 ## 18. Readiness
 
@@ -492,7 +532,15 @@ tested; the four-fixture golden baseline matches the notebook's own
 cell-74 assertions exactly, **independently confirmed by a real
 PaddleOCR-primary Phase 1->5 run in this sandbox**; and all 488
 non-paddle tests plus both Phase 5 integration tests (including the
-`requires_paddle` one) pass.
+`requires_paddle` one) pass. **Final acceptance (post-merge with
+`origin/main`'s M5, PR #6):** the complete, unfiltered 493-test suite
+passes -- 493 passed, 0 skipped, 0 deselected, 0 failed
+(`pytest -vv -m "requires_paddle or not requires_paddle"`) -- and the
+five `requires_paddle` tests, run together, are 5 passed, 0 skipped, 0
+failed, covering Phase 3 PaddleOCR parity, Phase 1->3, Phase 1->4
+normalization parity and Phase 1->5 financial-validation parity, with
+four PaddleOCR pages and zero Tesseract-fallback pages across the four
+fixtures (§14).
 
 **Notebook-to-package modularisation through Phase 5 is complete.** Every
 phase (1 ingestion, 2 preprocessing, 3 OCR, 4 normalisation, 5 financial
