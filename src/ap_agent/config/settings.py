@@ -39,6 +39,7 @@ __all__ = [
     "PaddleEngineOptions",
     "NormalizationConfig",
     "FinancialValidationConfig",
+    "MatchingConfig",
 ]
 
 
@@ -192,3 +193,32 @@ class FinancialValidationConfig:
 
     fail_closed_on_missing_total: bool = True
     fail_closed_on_integrity_error: bool = True
+
+
+@dataclass(frozen=True)
+class MatchingConfig:
+    """Configuration for Phase 6 supplier/PO/goods-receipt matching.
+
+    Source: notebook cell 77 ("PHASE 6 — CELL 1"), the validated
+    `matching_config` instance's values, turned into dataclass defaults
+    (the same treatment `NormalizationConfig`/`FinancialValidationConfig`
+    already received in M5/M6 -- no module-level config *instance* here).
+    """
+
+    artifact_root: Path
+
+    matching_version: str = "matching-v1"
+
+    monetary_quantization: Decimal = Decimal("0.01")
+    quantity_quantization: Decimal = Decimal("0.0001")
+
+    price_tolerance: Decimal = Decimal("0.01")
+    quantity_tolerance: Decimal = Decimal("0.0001")
+    total_tolerance: Decimal = Decimal("0.01")
+
+    supplier_match_threshold: Decimal = Decimal("0.90")
+    supplier_ambiguity_margin: Decimal = Decimal("0.05")
+    maximum_supplier_candidates: int = 5
+
+    allow_two_way_matching: bool = True
+    preserve_reference_snapshots: bool = True

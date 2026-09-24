@@ -64,6 +64,7 @@ __all__ = [
     "convert_to_json_safe",
     "canonical_decimal_text",
     "phase_5_json_safe",
+    "phase_6_json_safe",
 ]
 
 
@@ -463,3 +464,56 @@ def phase_5_json_safe(value: Any) -> Any:
         return value
 
     raise TypeError(f"Unsupported Phase 5 serialization type: {type(value).__name__}")
+
+
+# ---------------------------------------------------------
+# Phase 6 (matching) serialiser
+# ---------------------------------------------------------
+
+
+def phase_6_json_safe(value: Any) -> Any:
+    """Convert Phase 6 objects into JSON-safe data (notebook cell 82,
+    "PHASE 6 — CELL 5", `phase_6_json_safe`).
+
+    A fourth, distinct converter alongside `convert_to_json_safe` (Phase 4)
+    and `phase_5_json_safe` (Phase 5) -- D-8-style policy: kept under its
+    own name rather than merged, even though it is close to `phase_5_json_safe`
+    (branch order and `Decimal`/date/UUID handling match). It differs in two
+    verbatim, notebook-native ways that must not be "cleaned up" away: sets
+    are converted to an *unsorted* list (`phase_5_json_safe` sorts them),
+    and there is no `TypeError` fail-closed branch for an unsupported type
+    -- an unmatched value is returned as-is, exactly as the notebook wrote
+    it.
+    """
+
+    if value is None:
+        return None
+
+    if isinstance(value, Enum):
+        return value.value
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if isinstance(value, Decimal):
+        return format(value, "f")
+
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if is_dataclass(value):
+        return {
+            dataclass_field.name: phase_6_json_safe(getattr(value, dataclass_field.name))
+            for dataclass_field in fields(value)
+        }
+
+    if isinstance(value, dict):
+        return {str(key): phase_6_json_safe(item) for key, item in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [phase_6_json_safe(item) for item in value]
+
+    return value

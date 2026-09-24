@@ -1623,3 +1623,137 @@ Values below come from the notebook's recorded outputs.
 - Still open: R-02 (fresh "Run all" fails at cell 46). Known defect: R-04 (stale Phase 3 OCR artifact status). Both are carried into M2.
 - **M1 is complete.** M2 may begin with M2.0 (golden-output capture in a pinned Paddle-capable environment) and M2.1–M2.3.
 - No Phase 2–5 extraction is declared "parity-verified" until the M2.0 golden outputs exist.
+
+## 14. M7 addendum — Phase 4 short-PO correction and Phase 6 extraction
+
+**Notebook cell count is now stale above.** Between M6 and M7 the notebook's
+owner extended `notebooks/accounts_payable_pipeline.ipynb` from 76 to
+**85 cells** (verified with `jq '.cells | length'`): one new Phase 4
+correction cell and a complete, already-executed, already-self-tested
+Phase 6 ("Supplier, PO and Goods-Receipt Matching") section. The notebook
+itself was not modified by M7 (CLAUDE.md); this addendum records the
+notebook owner's own addition and what M7 extracted from it. §0/§1's "76
+cells" summary lines describe the M1-era notebook and are left as
+historical record rather than rewritten (task instruction: update this
+file only where needed, do not rewrite prior sections unnecessarily).
+
+### 14.1 New/changed cells (0-indexed in the 85-cell notebook)
+
+| Index | Exec | Title | M7 target |
+|---:|---:|---|---|
+| 62 | 93 | `PHASE 4 — CORRECTION CELL 4C` ("Explicit short purchase-order identifiers") | `tools/normalization.py` (extends the existing `value_is_compatible`) |
+| 76 | – | markdown: "Phase 6 — Supplier, PO and Goods-Receipt Matching" | – |
+| 77 | 104 | `PHASE 6 — CELL 1` (reference-data and matching contracts) | `models/matching.py`, `config/settings.py::MatchingConfig` |
+| 78 | 105 | `PHASE 6 — CELL 2` (reference data, supplier resolution, PO retrieval) | `tools/matching.py` (prototype reference data **not** extracted — see §14.3) |
+| 79 | 106 | `PHASE 6 — CELL 3` (goods-receipt retrieval, match-mode selection) | `tools/matching.py` (prototype goods-receipt data **not** extracted) |
+| 80 | 107 | `PHASE 6 — CELL 4` (line matching and tolerance evaluation) | `tools/matching.py` |
+| 81 | 109 | `shutil.rmtree(...)` Colab cleanup | not extracted (§8-style Colab-only code) |
+| 82 | 110 | `PHASE 6 — CELL 5` (orchestration and artifact persistence) | `tools/matching.py`, `artifacts/serialization.py::phase_6_json_safe` |
+| 83 | 111 | `PHASE 6 — CELL 6` (final matching validation) | source of `tests/golden/phase_6_expected_results.json` |
+
+No earlier draft/superseded cell shares any of these marker strings
+(verified by exact substring search over all 85 cells): each is the single,
+final, active definition, so no additional duplicate-name resolution beyond
+§14.2 was needed.
+
+### 14.2 Definition precedence changes (extends §3.2)
+
+- `value_is_compatible` (Phase 4): cell 60's ("CORRECTION CELL 4A")
+  `PURCHASE_ORDER_NUMBER` branch (`PURCHASE_ORDER_PATTERN`, requires 4+
+  characters) is now **overridden** by cell 62's short-identifier check
+  (`is_explicit_purchase_order_identifier`, `SHORT_PO_IDENTIFIER_PATTERN`)
+  for that one field only; every other field's branch is unchanged. The
+  notebook's cell 62 drops the `config` parameter entirely (at that point
+  in the notebook it still read `normalization_config` as a hidden
+  global); `src/`'s already-migrated (M5), config-threaded
+  `value_is_compatible(field_name, raw_value, *, config)` keeps its
+  signature and gains only the new early-return branch — logic verbatim,
+  signature adaptation only (same category M5 already used throughout).
+- `append_unique_reason`: Phase 6 (cell 80, reused by cell 82) is a
+  **fourth** binding, textually identical to Phase 5's (does not skip
+  falsy reasons) but kept as its own private helper in `tools/matching.py`
+  per the existing per-tool-module naming policy — not imported from
+  `tools.financial_validation`, and not merged despite the coincidental
+  behavioural match (only `calculate_file_sha256` was approved for
+  cross-phase consolidation, D-10).
+- `phase_6_json_safe` (Phase 6, cell 82): a **fourth** JSON-safe converter
+  alongside `convert_to_json_safe` (Phase 4) and `phase_5_json_safe`
+  (Phase 5), added to `artifacts/serialization.py` under its own name
+  (D-8 policy). It differs from `phase_5_json_safe` in two verbatim,
+  notebook-native ways, preserved rather than "fixed": sets convert to an
+  *unsorted* list, and there is no `TypeError` fail-closed branch for an
+  unsupported type.
+- `write_text_idempotently` (Phase 6, cell 82): already idempotent in the
+  notebook (`.tmp`-suffix-sibling naming, matching the Phase 2/3/4
+  convention, not Phase 5's dot-prefix convention) — a **verbatim** port,
+  not a new M7 deviation, kept local to `tools/matching.py` per the
+  existing "phase-specific persistence stays in the phase's own tools
+  module" precedent (Q-6). Upgraded to raise the new, structured
+  `MatchingIntegrityError` instead of the notebook's bare `RuntimeError`,
+  mirroring the `NormalizationIntegrityError`/`FinancialValidationIntegrityError`
+  precedent from M5/M6 (same cases fail, structured reason instead of a
+  bare exception).
+- `build_matching_input`'s bridge checks (Phase 6, cell 82) raise the new
+  `MatchingIntegrityError` in place of the notebook's bare `ValueError`,
+  same precedent.
+
+### 14.3 Reference-data placement (extends D-2/D-3)
+
+Cell 78's `prototype_suppliers`/`prototype_purchase_orders` and cell 79's
+`prototype_goods_receipts` are hand-built to match the four notebook
+fixtures exactly (e.g. PO `"99"` totalling `858.86`, matching
+Template1_Instance90.jpg's own SUBTOTAL). Per D-2/D-3, none of this data
+was extracted into `src/`. `src/ap_agent/models/matching.py` and
+`src/ap_agent/tools/matching.py` contain **zero** fixture-specific data
+(`grep`-verified: no `"SUP-001"`, no `"99"`, no `"Snyder, Hammond and
+Anderson"` anywhere under `src/`); the controlled prototype records live
+under `tests/fixtures/reference_data/` (`suppliers.json`,
+`purchase_orders.json`, `goods_receipts.json`), loaded by the new generic
+`ap_agent.adapters.reference_data_adapter.load_reference_data_bundle`,
+which only knows the file-naming convention and JSON-to-dataclass
+mapping — never the records themselves. A future ERP/accounting
+integration implements the same `ReferenceDataBundle`-returning interface
+without touching `tools/matching.py`.
+
+### 14.4 Manifest filename (deliberate, flagged choice)
+
+The notebook's own Phase 5 manifest file is named `artifact_manifest.json`
+(`tools/financial_validation.py`), but its Phase 6 manifest (cell 82) is
+named plain **`manifest.json`** — an inconsistency already present between
+the notebook's own Phase 5 and Phase 6 cells, not introduced by
+extraction. M7 keeps `manifest.json` for Phase 6 (verbatim-extraction
+rule takes precedence over cross-phase naming consistency here), rather
+than silently renaming it to match Phase 5. Flagged, not hidden.
+
+### 14.5 New golden baseline
+
+`tests/golden/phase_6_expected_results.json` (source: notebook cell 83)
+records the exact per-document Phase 6 outcomes and the aggregate
+(1 SUCCEEDED / 3 REVIEW_REQUIRED / 0 FAILED, 2 three-way matches, 6 line
+matches total). `tests/golden/phase_4_expected_results.json` was updated
+for the short-PO correction: `Template1_Instance90.jpg` gains
+`PURCHASE_ORDER_NUMBER: "99"` (header-field count 8 → 9; aggregate
+`header_fields_total` 32 → 33; line items, statuses and every other
+document's fields are unchanged). See
+`docs/m7_phase_6_reference_matching_report.md` for the full result table.
+
+### 14.6 Decisions added at M7 close
+
+| ID | Decision |
+|---|---|
+| D-13 | Phase 6's reference-data contracts (`SupplierRecord`, `PurchaseOrderRecord`, `GoodsReceiptRecord`, `ReferenceDataBundle`) are generic repository shapes; all fixture-specific instances live under `tests/fixtures/reference_data/`, loaded by a generic JSON adapter (`ap_agent.adapters.reference_data_adapter`), never as `src/` module-level data (extends D-1/D-2/D-3 to Phase 6). |
+| D-14 | Phase 6's `manifest.json` filename is kept verbatim from the notebook, not renamed to match Phase 5's `artifact_manifest.json` (§14.4). |
+| D-15 | `append_unique_reason` and `phase_6_json_safe` are Phase 6's own private/module bindings, not shared with Phase 5's despite a coincidental behavioural match, extending D-8/D-9's per-phase-name policy. |
+
+### 14.7 Risk register update
+
+- R-02 (fresh "Run all" fails at cell 46, missing execution counts 30/31)
+  is unaffected by the M7 notebook additions and remains open/carried
+  forward as historical notebook state, not required for M7's scope.
+- No new risk is opened by the Phase 4 short-PO correction: it is
+  strictly additive (an OR'd early-return branch), verified not to change
+  any other document's Phase 4 output (`tests/golden/phase_4_expected_results.json`
+  diff is limited to `Template1_Instance90.jpg` and the aggregate total).
+- Phase 6 introduces no new heavy/optional dependency (§8.1: standard
+  library only) and no new module-level config instance or cycle risk
+  (§4.3/§4.4 extended in `docs/m7_phase_6_reference_matching_report.md`).

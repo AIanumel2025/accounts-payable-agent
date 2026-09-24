@@ -1,0 +1,42 @@
+[
+  {
+    "supplier_id": "SUP-001",
+    "legal_name": "Snyder, Hammond and Anderson",
+    "aliases": ["Snyder Hammond and Anderson", "Snyder Hammond & Anderson"],
+    "tax_identifier": null,
+    "addresses": ["765 Ruth Harbors, Lynnmouth, NM 46135"],
+    "default_currency": "USD",
+    "active": true,
+    "approved_for_payment": true
+  },
+  {
+    "supplier_id": "SUP-002",
+    "legal_name": "Thompson and Sons",
+    "aliases": ["Thompson & Sons", "ThompsonandSons"],
+    "tax_identifier": "1234567000070007",
+    "addresses": ["61303 Kayla Plains Apt. 801, Carolbury, WV 72045 US"],
+    "default_currency": "EUR",
+    "active": true,
+    "approved_for_payment": true
+  },
+  {
+    "supplier_id": "SUP-003",
+    "legal_name": "SuperStore",
+    "aliases": ["Super Store"],
+    "tax_identifier": null,
+    "addresses": [],
+    "default_currency": "USD",
+    "active": true,
+    "approved_for_payment": true
+  },
+  {
+    "supplier_id": "SUP-004",
+    "legal_name": "Legacy Office Supplies",
+    "aliases": [],
+    "tax_identifier": null,
+    "addresses": [],
+    "default_currency": "USD",
+    "active": false,
+    "approved_for_payment": false
+  }
+]

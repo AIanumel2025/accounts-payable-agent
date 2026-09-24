@@ -39,6 +39,7 @@ from ap_agent.tools.normalization import (
     extract_header_party_candidates,
     extract_inline_candidates,
     extract_labelled_text_candidates,
+    is_explicit_purchase_order_identifier,
     line_to_evidence_reference,
     normalize_currency_code,
     normalize_date_value,
@@ -47,6 +48,7 @@ from ap_agent.tools.normalization import (
     parse_decimal_value,
     select_best_candidate,
     token_to_evidence_reference,
+    value_is_compatible,
 )
 
 pytestmark = pytest.mark.unit
@@ -566,3 +568,84 @@ def test_deduplicate_candidates_keeps_highest_confidence_per_value(config):
     deduplicated = deduplicate_candidates((low, high))
     assert len(deduplicated) == 1
     assert deduplicated[0] is high
+
+
+# --- M7 short purchase-order identifier correction (notebook cell 62,
+#     "PHASE 4 — CORRECTION CELL 4C") ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw_value, expected",
+    [
+        ("99", True),
+        ("#1042", True),
+        ("CA-2012-AB10015140-40974", True),
+        ("", False),
+        ("   ", False),
+        ("PURCHASE ORDER", False),
+        ("a" * 65, False),
+    ],
+)
+def test_is_explicit_purchase_order_identifier(raw_value, expected):
+    assert is_explicit_purchase_order_identifier(raw_value) is expected
+
+
+def test_short_explicit_po_value_is_compatible(config):
+    assert value_is_compatible(InvoiceFieldName.PURCHASE_ORDER_NUMBER, "99", config=config) is True
+
+
+def test_long_po_identifiers_remain_compatible(config):
+    """The correction is additive: existing longer identifiers that already
+    satisfied the pre-M7 `PURCHASE_ORDER_PATTERN` must keep working."""
+
+    assert (
+        value_is_compatible(InvoiceFieldName.PURCHASE_ORDER_NUMBER, "CA-2012-AB10015140-40974", config=config)
+        is True
+    )
+
+
+def test_empty_and_label_only_po_values_are_rejected(config):
+    assert value_is_compatible(InvoiceFieldName.PURCHASE_ORDER_NUMBER, "", config=config) is False
+    assert value_is_compatible(InvoiceFieldName.PURCHASE_ORDER_NUMBER, "PO Number:", config=config) is False
+
+
+def test_labelled_short_po_number_is_extracted_as_a_candidate(config):
+    """Explicitly labelled `PO Number: 99` must produce a
+    PURCHASE_ORDER_NUMBER candidate with proposed_value "99" (task §3)."""
+
+    t1 = _token("PO Number: 99", 0, 0, 150, 15, order=1)
+    l1 = _line("PO Number: 99", 0, 0, 150, 15, order=1, tokens=[t1])
+    ocr_result = _ocr_result([_page([l1], [t1])])
+    normalization_input = _normalization_input(ocr_result)
+    index = build_ocr_evidence_index(normalization_input)
+
+    candidates = extract_inline_candidates(
+        document_id=normalization_input.document_id,
+        evidence_index=index,
+        field_name=InvoiceFieldName.PURCHASE_ORDER_NUMBER,
+        config=config,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].proposed_value == "99"
+
+
+def test_unlabelled_short_number_is_not_extracted_as_a_po(config):
+    """An unrelated, unlabelled short number elsewhere on the page must
+    never become a PURCHASE_ORDER_NUMBER candidate: the correction only
+    loosens value compatibility, never label matching (task §3)."""
+
+    t1 = _token("99", 0, 0, 30, 15, order=1)
+    l1 = _line("99", 0, 0, 30, 15, order=1, tokens=[t1])
+    ocr_result = _ocr_result([_page([l1], [t1])])
+    normalization_input = _normalization_input(ocr_result)
+    index = build_ocr_evidence_index(normalization_input)
+
+    candidates = extract_inline_candidates(
+        document_id=normalization_input.document_id,
+        evidence_index=index,
+        field_name=InvoiceFieldName.PURCHASE_ORDER_NUMBER,
+        config=config,
+    )
+
+    assert candidates == ()

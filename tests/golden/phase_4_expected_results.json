@@ -1,6 +1,6 @@
 {
-  "golden_baseline_version": "1.0",
-  "source": "notebooks/accounts_payable_pipeline.ipynb cell 66 (\"PHASE 4 — FINAL VALIDATION CELL\"), cross-checked against docs/modularisation_map.md §10.4 and the M5 task brief.",
+  "golden_baseline_version": "1.1",
+  "source": "notebooks/accounts_payable_pipeline.ipynb cell 66 (\"PHASE 4 — FINAL VALIDATION CELL\"), cross-checked against docs/modularisation_map.md §10.4 and the M5 task brief. Updated for M7 (docs/m7_phase_6_reference_matching_report.md): the notebook's \"PHASE 4 — CORRECTION CELL 4C\" (short explicit purchase-order identifiers) is now active, so Template1_Instance90.jpg's labelled \"PO Number: 99\" now resolves to PURCHASE_ORDER_NUMBER=\"99\" (confirmed by the notebook's Phase 6 golden matching of that invoice to prototype PO \"99\"; the notebook's own Phase 4 final-validation cell does not enumerate every header field, so this addition was not independently listed there).",
   "purpose": "Phase 4 normalisation parity baseline for the four controlled fixtures declared in tests/fixtures/invoices/manifest.json, run through Phase 1 -> Phase 2 -> Phase 3 (PaddleOCR primary) -> Phase 4 normalisation.",
   "environment_note": "Recovered directly from the notebook's own final validation cell (cell 66), which asserts these exact field values, line-item values and review-reason subsets against the notebook's own validated Phase 4 run. Not independently re-verified against a live PaddleOCR run in this milestone's sandbox, for the same network-egress reason documented in tests/golden/phase_3_expected_results.json (every PaddleOCR model-hosting platform is blocked at this environment's egress proxy). The `requires_paddle`-marked integration test in tests/integration/test_phase_1_to_4_pipeline.py must be run once network access is available; until then this file is the notebook-recovered semantic baseline, not an independently reproduced one.",
   "config": {
@@ -11,7 +11,7 @@
     {
       "filename": "Template1_Instance90.jpg",
       "expected_status": "REVIEW_REQUIRED",
-      "expected_header_field_count": 8,
+      "expected_header_field_count": 9,
       "expected_line_item_count": 5,
       "expected_fields": {
         "SUPPLIER_NAME": null,
@@ -19,6 +19,7 @@
         "INVOICE_NUMBER": null,
         "INVOICE_DATE": "2000-04-12",
         "DUE_DATE": "1998-03-15",
+        "PURCHASE_ORDER_NUMBER": "99",
         "CURRENCY": "EUR",
         "SUBTOTAL": "858.86",
         "TAX_AMOUNT": "36.45",
@@ -154,7 +155,7 @@
   "aggregate_expected": {
     "documents_normalized": 4,
     "normalized_records": 4,
-    "header_fields_total": 32,
+    "header_fields_total": 33,
     "line_items_total": 16,
     "successful_documents": 1,
     "review_required_documents": 3,

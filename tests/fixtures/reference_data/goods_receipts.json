@@ -1,0 +1,64 @@
+[
+  {
+    "goods_receipt_id": "GR-ID-00099",
+    "goods_receipt_number": "GR-00099",
+    "purchase_order_number": "99",
+    "supplier_id": "SUP-002",
+    "receipt_date": "2000-04-10",
+    "lines": [
+      {
+        "receipt_line_number": 1,
+        "purchase_order_line_number": 1,
+        "quantity_received": "3.00",
+        "item_code": null,
+        "description": "Sit sit together."
+      },
+      {
+        "receipt_line_number": 2,
+        "purchase_order_line_number": 2,
+        "quantity_received": "2.00",
+        "item_code": null,
+        "description": "Maybe religious several."
+      },
+      {
+        "receipt_line_number": 3,
+        "purchase_order_line_number": 3,
+        "quantity_received": "6.00",
+        "item_code": null,
+        "description": "Green military listen."
+      },
+      {
+        "receipt_line_number": 4,
+        "purchase_order_line_number": 4,
+        "quantity_received": "2.00",
+        "item_code": null,
+        "description": "Course eight."
+      },
+      {
+        "receipt_line_number": 5,
+        "purchase_order_line_number": 5,
+        "quantity_received": "5.00",
+        "item_code": null,
+        "description": "Cost number world."
+      }
+    ],
+    "state": "POSTED"
+  },
+  {
+    "goods_receipt_id": "GR-ID-CA-2012-AB10015140-40974",
+    "goods_receipt_number": "GR-CA-2012-AB10015140-40974",
+    "purchase_order_number": "CA-2012-AB10015140-40974",
+    "supplier_id": "SUP-003",
+    "receipt_date": "2012-03-05",
+    "lines": [
+      {
+        "receipt_line_number": 1,
+        "purchase_order_line_number": 1,
+        "quantity_received": "1",
+        "item_code": "FUR-CH-4421",
+        "description": "Global Push Button Manager's Chair, Indigo"
+      }
+    ],
+    "state": "POSTED"
+  }
+]
