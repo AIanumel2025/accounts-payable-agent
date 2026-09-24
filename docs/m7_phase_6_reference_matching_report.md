@@ -224,11 +224,13 @@ real-Paddle integration test, §12).
 
 ## 11. Non-Paddle test result
 
-`pytest -q -m "not requires_paddle"`: **559 passed, 6 deselected, 0 failed** (up from
-478 passed / 5 deselected before M7 — the delta is the 1 new deselected
-`requires_paddle` test in `test_phase_1_to_6_pipeline.py` plus 81 new fast tests: 8
-Phase 4 short-PO tests + 96 Phase 6 unit tests − some already counted, net 81 new
-passing tests). Two pre-existing environment gaps unrelated to this milestone's code
+`pytest -q -m "not requires_paddle"`: **560 passed, 6 deselected, 0 failed** (up from
+478 passed / 5 deselected before M7: 8 new Phase 4 short-PO tests, 59 new Phase 6 unit
+tests across `test_matching_models.py`, `test_matching_tools.py`,
+`test_matching_artifacts.py` and `test_matching_golden_baseline.py`, 1 new fast
+integration test (`test_phase_1_to_6_pipeline_integrity_on_all_four_fixtures`, the
+Tesseract-forced variant), and 1 new deselected `requires_paddle` test). Two
+pre-existing environment gaps unrelated to this milestone's code
 changes were also closed as part of validating this work: `tesseract-ocr` (system
 binary) and the `pdf`/`preprocessing`/`ocr-tesseract`/`ocr-paddle` extras were not
 installed in the starting sandbox; installing them (`apt-get install tesseract-ocr`;
@@ -267,10 +269,10 @@ in these tests (only the separate, intentionally-Tesseract-forced integrity test
 ## 13. Full regression result
 
 `pytest -vv -m "requires_paddle or not requires_paddle"` (deselecting neither marker),
-run to completion: **all tests passed, 0 failed, 0 skipped, 0 deselected** (the fast
-suite plus all 6 `requires_paddle` tests; exact count recorded in the commit that
-finalizes this section once the run's own summary line is available). Zero mocking in
-any `requires_paddle` test; zero forced Tesseract fallback in the real-Paddle tests
+run to completion: **566 passed, 0 failed, 0 skipped, 0 deselected**, in 1219.03s
+(0:20:19). This is every test in the repository (the 560-test fast suite plus all 6
+`requires_paddle` tests) with none excluded by either marker branch. Zero mocking in any
+`requires_paddle` test; zero forced Tesseract fallback in the real-Paddle tests
 (verified explicitly by `test_real_paddleocr_uses_paddle_on_every_fixture_page` and the
 `assert all(page.ocr_engine == "paddleocr" ...)` checks inside each
 `..._final_statuses_match_the_semantic_golden_baseline` test). Acceptance criteria
@@ -350,7 +352,7 @@ None. Both the fast suite (§11) and the real-Paddle suite (§12/§13) are green
 
 ## 18. Readiness for merge
 
-**Ready to merge.** The fast suite is green (559/559, 6 correctly deselected), the
+**Ready to merge.** The fast suite is green (560/560, 6 correctly deselected), the
 real-Paddle suite is green (6/6, confirming the short-PO correction and the full Phase
 6 golden baseline against real OCR output with zero Tesseract fallback), and the
 combined full-marker run has zero failures/skips/deselections. The Phase 4 correction
