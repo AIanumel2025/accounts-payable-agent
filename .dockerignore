@@ -1,0 +1,31 @@
+# Never bake credentials into the image (task §9/§10).
+.env
+.env.*
+!.env.example
+
+# Never bake the behavioural-reference notebook or generated artifacts
+# into the application image (task §9: "Do not copy generated invoice
+# artifacts into the image.").
+notebooks/
+tests/
+docs/
+*.ipynb
+
+# Local/dev cruft.
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Never bake database files or dumps into the image.
+*.sql.gz
+*.dump
+pgdata/
+postgres-data/

@@ -21,6 +21,18 @@ The notebook's own cell-69 `build_validation_input` raised a bare
 but fails closed with this structured exception instead, and adds the
 artifact-existence/hash check the task brief requires (M6 task §3) that the
 notebook itself never performed.
+
+`PostgresConfigurationError`, `MigrationIntegrityError`,
+`TenantContextError` and `MemoryIntegrityError` are new in M8, for the
+Phase 7 PostgreSQL operational-memory system
+(`ap_agent.db`, `ap_agent.repositories`, `ap_agent.services.memory_service`).
+The notebook's own Phase 7 cells raised bare `RuntimeError` for every one
+of these cases (missing/invalid DSN, migration checksum or description
+mismatch, unapplied tenant context, workflow-identity or payload-hash
+collision); this module upgrades them to structured, typed exceptions
+following the same precedent as `NormalizationIntegrityError` /
+`FinancialValidationIntegrityError` / `MatchingIntegrityError`, without
+changing which cases fail closed.
 """
 
 from typing import Any
@@ -32,6 +44,10 @@ __all__ = [
     "NormalizationIntegrityError",
     "FinancialValidationIntegrityError",
     "MatchingIntegrityError",
+    "PostgresConfigurationError",
+    "MigrationIntegrityError",
+    "TenantContextError",
+    "MemoryIntegrityError",
 ]
 
 
@@ -94,6 +110,65 @@ class MatchingIntegrityError(Exception):
     `NormalizationIntegrityError`/`FinancialValidationIntegrityError`
     precedent of upgrading them to a structured exception without changing
     which cases fail."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class PostgresConfigurationError(Exception):
+    """Raised when the Phase 7 PostgreSQL DSN or transport policy cannot be
+    satisfied: missing/empty/malformed DSN environment variable, or a DSN
+    whose SSL/channel-binding/pooled-endpoint parameters fail the
+    configured `ap_agent.config.postgres.PostgresTransportPolicy`. Never
+    includes the DSN itself in its message (`ap_agent.db.connection.redact_dsn`)."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class MigrationIntegrityError(Exception):
+    """Raised when an applied migration's recorded checksum or description
+    does not match the migration file currently on disk (task §4A: "Reject
+    altered checksums. Reject altered descriptions. Do not silently
+    rewrite an applied migration."). The notebook's own
+    `apply_bootstrap_migration` / `apply_memory_schema_migration` /
+    `apply_invoice_memory_migration` raised a bare `RuntimeError` for this;
+    `ap_agent.db.migration_runner` raises this structured exception
+    instead, fail-closed, without applying any further migration."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class TenantContextError(Exception):
+    """Raised when a tenant-scoped transaction cannot verify that
+    `SELECT set_config('ap_agent.tenant_id', ...)` actually took effect
+    (task §5: "Verify that the tenant context was applied ... Missing
+    tenant context must fail closed"). Mirrors the notebook's
+    `set_memory_tenant` (cell 88), which raised a bare `RuntimeError`."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class MemoryIntegrityError(Exception):
+    """Raised by `ap_agent.services.memory_service.MemoryService` and
+    `ap_agent.repositories.postgres_memory_repository.PostgresMemoryRepository`
+    when persisted content cannot be trusted: a workflow-identity
+    collision, a stored-vs-recomputed payload-hash mismatch, a conflicting
+    write under the same deterministic identity, or a Phase 4/5/6 result
+    alignment failure (missing/duplicate/cross-document/cross-batch
+    results). Mirrors the notebook's bare `RuntimeError`s in
+    `persist_invoice_memory_records` / `retrieve_matched_invoice_memory`
+    (cell 88) with a structured, fail-closed exception."""
 
     def __init__(self, reason: str, details: dict[str, Any] | None = None):
         super().__init__(reason)
