@@ -971,3 +971,156 @@ the environment owner broadens this environment's network access level or adds t
 Neon host to its allowed destinations (environment title-bar menu → Edit → Network
 access), then `pytest -m requires_postgres -vv` should be re-run from this same
 branch — the harness and tests need no further change to do so.
+
+## 30. Fourth acceptance-gate attempt: moved to GitHub Actions, `CREATE ROLE`/`ALTER ROLE` defect found and fixed — 16/16 pass
+
+The Claude Code cloud sandbox used in §27-29 cannot make native PostgreSQL TCP
+connections to the Neon test host under any of its network-access levels (confirmed
+three separate times). Rather than continuing to retry from inside that sandbox, the
+PostgreSQL acceptance execution itself was moved to GitHub Actions
+(`.github/workflows/m8-postgres-acceptance.yml`, added in commit `1f2b99d`): a
+`pull_request`/`workflow_dispatch`-triggered job that installs the same
+`dev,postgres,preprocessing,ocr-tesseract` extras used in §18/§29, reads the DSN only
+from the encrypted `AP_AGENT_TEST_POSTGRES_DSN` repository secret (fails closed if it
+is unset/empty, never prints it), and runs `pytest -m requires_postgres -vv` unmodified.
+
+### 30.1 First two GitHub Actions runs: Neon reachable, but a real application defect
+
+The workflow's first `pull_request` run (id `36180482556`) and `push` run (id
+`36180482620`), both against commit `1f2b99d`, both **reached Neon successfully** —
+confirming that GitHub Actions' network egress, unlike the sandbox's, is not blocked —
+but both produced:
+
+```
+4 passed, 683 deselected, 12 errors in 24.33s
+```
+
+Every error was identical, from `src/ap_agent/db/roles.py:95` inside
+`create_least_privilege_role`:
+
+```
+psycopg.errors.SyntaxError: syntax error at or near "$1"
+LINE 1: ...ROLE ap_agent_m8_test_runtime WITH LOGIN PASSWORD $1 NOSUPER...
+```
+
+**Root cause**: `create_least_privilege_role` bound the password as an ordinary `%s`
+query parameter in `CREATE ROLE ... PASSWORD %s ...`/`ALTER ROLE ... PASSWORD %s ...`.
+Unlike a parsed/planned `SELECT`/`INSERT`, `CREATE ROLE`/`ALTER ROLE` are PostgreSQL
+*utility* statements and do not accept a protocol-level bind parameter (`$1`) in the
+`PASSWORD` position at all — the server rejects the placeholder itself, before the
+password value is ever considered. This is a genuine, previously-undetected defect in
+M8's own role-provisioning code (§27.1), not a test-harness or environment issue: the
+16-test suite, the fail-closed database-identity gate, and the least-privilege-role
+fixture were all working exactly as designed and correctly surfaced a real bug the
+first time they ran against a live PostgreSQL server.
+
+The job log's pytest traceback (visible only in the GitHub Actions job log, an
+artifact of pytest's own local-variable frame capture — not anything this codebase
+prints or logs) showed the freshly generated ephemeral runtime-role password in the
+failed `cursor.execute` call's `params` tuple. That specific password was never
+actually assigned to any role — `CREATE ROLE` failed with a syntax error before
+completing — and the job container (and the password with it) was discarded at the
+end of the run; no credential was retained, reused, or written anywhere durable.
+
+### 30.2 Fix
+
+Commit `2d324b4`:
+
+- **`src/ap_agent/db/roles.py`**: `create_least_privilege_role` now composes both
+  `CREATE ROLE` and `ALTER ROLE` with `psycopg.sql.SQL(...).format(role=sql.Identifier
+  (role_name), password=sql.Literal(password))` instead of an f-string role name plus
+  a `%s`-bound password. `sql.Literal` quotes and escapes the password client-side —
+  the same safety property a bind parameter would have given, applied the way
+  PostgreSQL DDL actually requires it (verified against quotes, spaces, backslashes,
+  symbols, and a SQL-injection-shaped string in the tests below). `sql.Identifier` is
+  applied to the role name *in addition to*, not instead of, the pre-existing
+  `validate_identifier` regex allowlist (defence in depth, per instructions). The
+  password is never manually interpolated, concatenated, `repr()`-ed, quoted, or
+  escaped by hand, and never logged. The function's docstring — which previously
+  claimed the password was "bound as a query parameter, never interpolated into SQL
+  text" — was corrected to explain why that claim was wrong for this statement type
+  and what replaces it.
+- **`tests/unit/test_memory_roles.py`** (no database; a fake cursor/connection
+  captures each `execute()` call so the exact composed statement can be inspected):
+  `CREATE ROLE` composition; `ALTER ROLE` composition against an already-existing
+  role; passwords containing quotes, spaces, backslashes, symbols, an empty string,
+  and a `'; DROP ROLE ...; --`-shaped string (all render as a single well-formed
+  statement with exactly one `PASSWORD` clause); identifier rejection *before* any SQL
+  is issued (`cursor.calls == []`); the exact `NOSUPERUSER NOBYPASSRLS NOCREATEDB
+  NOCREATEROLE` flag set present on both statements; and that the password is never
+  written to stdout/stderr. **33/33 pass** (`pytest tests/unit/test_memory_roles.py
+  -vv`, run locally in this pass's Claude Code environment). The broader memory-module
+  unit suite — `test_memory_config.py`, `test_memory_models.py`,
+  `test_memory_mapping.py`, `test_memory_migrations.py`,
+  `test_memory_no_eager_psycopg_import.py`, `test_memory_serialization.py`,
+  `test_memory_service.py`, plus `test_memory_roles.py` itself — **109/109 pass**,
+  confirming no regression from this change.
+- **`.github/workflows/m8-postgres-acceptance.yml`**: removed the `push` trigger per
+  instructions (`pull_request` on this branch + `workflow_dispatch` only survive), and
+  added `concurrency: {group: m8-postgres-acceptance, cancel-in-progress: false}` so
+  two acceptance runs — which execute destructive statements (role creation,
+  `UPDATE`/`DELETE`/`TRUNCATE` rejection tests, a deliberate transaction rollback) —
+  can never run concurrently against the single shared Neon test database.
+
+### 30.3 Result: all 16 tests pass against real PostgreSQL
+
+Pushing the fix produced **exactly one** new GitHub Actions run — confirming both the
+push-trigger removal and the `github.head_ref` scoping guard work as intended — the
+`pull_request` `synchronize` run at
+<https://github.com/AIanumel2025/accounts-payable-agent/actions/runs/36181327060>,
+against commit `2d324b4`:
+
+```
+collecting ... collected 699 items / 683 deselected / 16 selected
+
+tests/integration/test_memory_postgres_integration.py::test_clean_migration_application PASSED
+tests/integration/test_memory_postgres_integration.py::test_idempotent_migration_rerun PASSED
+tests/integration/test_memory_postgres_integration.py::test_migration_checksum_mismatch_rejection PASSED
+tests/integration/test_memory_postgres_integration.py::test_concurrent_migration_locking PASSED
+tests/integration/test_memory_postgres_integration.py::test_tenant_row_level_read_isolation PASSED
+tests/integration/test_memory_postgres_integration.py::test_cross_tenant_write_rejection PASSED
+tests/integration/test_memory_postgres_integration.py::test_append_only_update_rejection PASSED
+tests/integration/test_memory_postgres_integration.py::test_append_only_delete_rejection PASSED
+tests/integration/test_memory_postgres_integration.py::test_append_only_truncate_rejection PASSED
+tests/integration/test_memory_postgres_integration.py::test_payload_hash_verification PASSED
+tests/integration/test_memory_postgres_integration.py::test_transaction_rollback_on_failure PASSED
+tests/integration/test_memory_postgres_integration.py::test_idempotent_persistence PASSED
+tests/integration/test_memory_postgres_integration.py::test_connection_reuse_without_tenant_context_leakage PASSED
+tests/integration/test_memory_postgres_integration.py::test_batch_persistence PASSED
+tests/integration/test_memory_postgres_integration.py::test_cross_document_isolation PASSED
+tests/integration/test_memory_postgres_integration.py::test_retrieval_fidelity PASSED
+
+16 passed, 683 deselected in 107.14s (0:01:47)
+```
+
+**16 passed, 0 failed, 0 errors, 0 skipped.** Every required behaviour — migration
+application, idempotent migration rerun, checksum-mismatch rejection, concurrent
+migration locking, real row-level tenant isolation (read isolation and cross-tenant
+write rejection under actual `WITH CHECK` enforcement), append-only `UPDATE`/`DELETE`/
+`TRUNCATE` rejection (all three triggers), payload-hash verification, transaction
+rollback on failure, idempotent persistence, pooled-connection reuse without
+tenant-context leakage, batch persistence, cross-document isolation, and retrieval
+fidelity — is now genuinely verified against the real, dedicated `ap_agent_m8_test`
+Neon database, through the genuinely least-privilege, non-superuser/non-`BYPASSRLS`
+`ap_agent_m8_test_runtime` role (§27.1). No test was mocked, skipped, deselected, or
+weakened to reach this result — the same 16-test module from §27.1 ran unmodified,
+except for the `roles.py` defect it exposed and this pass fixed.
+
+No DSN, password, or Neon hostname appears anywhere in the workflow file, the job
+logs (`AP_AGENT_TEST_POSTGRES_DSN: ***`, masked by GitHub's own secret redaction), this
+report, or any commit in this pass.
+
+### 30.4 Scope of this pass and what remains
+
+This pass changed exactly three files: `src/ap_agent/db/roles.py` (the fix),
+`tests/unit/test_memory_roles.py` (regression coverage), and
+`.github/workflows/m8-postgres-acceptance.yml` (trigger/concurrency changes). No other
+production module was touched. The full fast + PaddleOCR regression suite (§18/§29:
+641 passed, 3 pre-existing unrelated `paddleocr`-adapter failures, 6 `requires_paddle`
+skips) was **not** re-run in this pass — only the `requires_postgres`-scoped GitHub
+Actions job — so §18/§29 remains the last recorded fast-suite baseline, now with 14
+additional `test_memory_roles.py` cases layered on top of §27's 100 new M8 tests.
+
+**PostgreSQL acceptance: passed**, for the first time, via GitHub Actions rather than
+the Claude Code sandbox. Per this pass's own instructions, **PR #8 is left open, not
+merged.**
