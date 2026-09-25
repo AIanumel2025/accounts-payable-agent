@@ -868,3 +868,106 @@ not one:
    host's port 5432 at the TCP level (§27.2), unchanged since the previous pass.
 
 No source or test code was changed in this pass; only this report was updated.
+
+## 29. Third acceptance-gate attempt: dbname fixed, network still blocked
+
+A third pass was asked to re-confirm the same four preflight items, run
+`pytest -m requires_postgres -vv`, and — only if all 16 passed — run the full
+regression suite (`pytest -vv -m "requires_postgres or requires_paddle or not
+requires_postgres"`).
+
+**Preflight (confirmed):**
+- Branch: `claude/m8-phase-7-postgres-memory` (current).
+- Commit `29a015a` present in `git log` (an ancestor of the current HEAD,
+  `dfb1b23`, which is §28's report-only commit).
+- `AP_AGENT_TEST_POSTGRES_DSN`: set (154 characters; value never printed, logged, or
+  written to any file).
+- **Database name, now correct.** Parsing the DSN with `urllib.parse.urlparse`
+  (host/dbname/port/user fields only — the DSN string itself was never printed)
+  gives `dbname='ap_agent_m8_test'`, `host` ending `...neon.tech`, `user='neondb_owner'`.
+  Unlike §28, this matches `EXPECTED_TEST_DATABASE` exactly, so the harness's
+  fail-closed database-identity gate (§27.1) no longer fires before a connection is
+  even attempted.
+- **Host reachability.** A raw `socket.create_connection()` (8s timeout, bypassing
+  psycopg entirely) to each of the three resolved IPv4 addresses individually — the
+  same three addresses psycopg itself later tried — still times out on all three.
+  (An initial mixed-family probe hit `EAFNOSUPPORT` on this container's IPv6 stack
+  first; re-run restricted to the DSN host's IPv4 addresses to avoid that unrelated
+  noise.) DNS resolution succeeds (three IPv4 + three IPv6 addresses returned).
+  `read_documentation(topic="environment.network", situation="blocked")` confirms
+  this is still this Claude Code cloud environment's own network-access-level
+  setting denying the host — resolved by broadening network access or allow-listing
+  the host in the environment's settings (the environment's title-bar menu → Edit →
+  Network access), not from inside the session.
+
+**Environment note:** this pass ran in a freshly provisioned container with none of
+`pydantic`, `pytest`, `psycopg[binary]`, `psycopg_pool`, `numpy`,
+`opencv-python-headless`, `Pillow`, `pymupdf==1.28.2`, `pytesseract` or the system
+`tesseract-ocr` package pre-installed (collection failed with `ModuleNotFoundError`
+until they were). Installed the same set §18's environment note lists, at the same
+pins from `pyproject.toml`'s `dev`/`preprocessing`/`pdf`/`ocr-tesseract`/`postgres`
+extras, via `pip install --user` and `apt-get install tesseract-ocr`. No project file
+changed; `git status`/`git diff --stat` were empty both before and after this pass.
+
+**Result of `pytest -m requires_postgres -vv`:**
+
+```
+663 deselected, 16 errors in 90.98s
+```
+
+All 16 tests **collected and executed** (`test_clean_migration_application`,
+`test_idempotent_migration_rerun`, `test_migration_checksum_mismatch_rejection`,
+`test_concurrent_migration_locking`, `test_tenant_row_level_read_isolation`,
+`test_cross_tenant_write_rejection`, `test_append_only_update_rejection`,
+`test_append_only_delete_rejection`, `test_append_only_truncate_rejection`,
+`test_payload_hash_verification`, `test_transaction_rollback_on_failure`,
+`test_idempotent_persistence`, `test_connection_reuse_without_tenant_context_leakage`,
+`test_batch_persistence`, `test_cross_document_isolation`, `test_retrieval_fidelity`)
+— the static dbname gate passed this time, so every test proceeded to a real
+connection attempt. Every one errored identically at the connection layer:
+
+```
+psycopg.OperationalError: connection is bad: no error details available
+Multiple connection attempts failed. All failures were:
+- hostaddr '35.177.158.108': connection timeout expired
+- hostaddr '35.177.159.226': connection timeout expired
+- hostaddr '3.10.149.215': connection timeout expired
+- hostaddr '2a05:d01c:82:5407:...': connection is bad: no error details available
+- hostaddr '2a05:d01c:82:541d:...': connection is bad: no error details available
+- hostaddr '2a05:d01c:82:5424:...': connection is bad: no error details available
+```
+
+(`psycopg`'s multi-address `hostaddr` fallback tries every resolved address in
+sequence; the three IPv4 addresses each independently time out after the driver's
+own timeout, and the three IPv6 addresses then fail fast because this container's
+network stack cannot use that address family at all — consistent with the
+`EAFNOSUPPORT` seen in the standalone socket probe above. None of the 16 tests were
+skipped, deselected, mocked, or weakened; the assertion bodies of all 16 were never
+reached, because no connection ever completed.)
+
+None of the required behaviours — migrations/checksum enforcement, concurrent
+migration locking, non-owner runtime role creation, row-level tenant isolation,
+append-only UPDATE/DELETE/TRUNCATE rejection, payload-hash verification, rollback
+behavior, batch persistence, cross-document isolation, retrieval fidelity, or
+connection-pool tenant-context leakage — was exercised against real PostgreSQL in
+this pass, for the same reason as §27.3: the connection never opens.
+
+**Full regression suite: not run**, because its precondition (all 16
+`requires_postgres` tests passing) was not met, per this pass's own instructions.
+
+**Defects found in this pass: none.** The harness, the fail-closed database-identity
+gate, and the sixteen tests behaved exactly as designed once the dbname mismatch from
+§28 was corrected upstream (by whoever supplied the current
+`AP_AGENT_TEST_POSTGRES_DSN`, not by this pass). The only actions taken in this pass
+were environment setup (installing already-pinned dependencies into a fresh
+container) and this report update — no source or test code was changed.
+
+**Conclusion: still not safe to merge.** The one blocker from §28 that was under this
+project's control (the wrong `dbname`) is now resolved. The remaining blocker —
+this sandboxed Claude Code cloud environment's network-access-level setting denying
+the Neon host — is unchanged across all three attempts (§27.2, §28, this section) and
+is not something any code or test change in this repository can fix. **To unblock**:
+the environment owner broadens this environment's network access level or adds the
+Neon host to its allowed destinations (environment title-bar menu → Edit → Network
+access), then `pytest -m requires_postgres -vv` should be re-run from this same
+branch — the harness and tests need no further change to do so.
