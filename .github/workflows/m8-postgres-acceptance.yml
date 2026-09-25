@@ -9,13 +9,21 @@ name: M8 PostgreSQL acceptance
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  push:
-    branches:
-      - claude/m8-phase-7-postgres-memory
   workflow_dispatch: {}
 
 permissions:
   contents: read
+
+# This suite runs destructive statements (role creation, UPDATE/DELETE/
+# TRUNCATE rejection tests, transaction-rollback tests) against a single
+# shared Neon test database, so two runs must never execute concurrently
+# against it. cancel-in-progress is false rather than true: a superseded
+# run is left to finish (or fail on its own) instead of being killed
+# mid-transaction, which could leave the shared runtime role/schema in an
+# inconsistent state for the run queued behind it.
+concurrency:
+  group: m8-postgres-acceptance
+  cancel-in-progress: false
 
 jobs:
   postgres-acceptance:

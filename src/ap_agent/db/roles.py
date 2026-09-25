@@ -70,9 +70,25 @@ def create_least_privilege_role(
 ) -> None:
     """Create (idempotently) a `LOGIN` role with neither `SUPERUSER` nor
     `BYPASSRLS` (task: "Add an isolated test runtime role"), and no
-    `CREATEDB`/`CREATEROLE`. `password` is bound as a query parameter,
-    never interpolated into SQL text or logged.
+    `CREATEDB`/`CREATEROLE`.
+
+    `CREATE ROLE`/`ALTER ROLE` are PostgreSQL utility statements, not an
+    ordinary parsed/planned query — the server does not accept a protocol
+    bind parameter (`$1`) in the `PASSWORD` position, so
+    `cursor.execute("...PASSWORD %s...", (password,))` fails with a
+    `SyntaxError` before ever reaching the password. `password` is
+    instead composed directly into the statement text via
+    `psycopg.sql.Literal`, which quotes and escapes it the same way
+    libpq's own literal-quoting rules would (verified against passwords
+    containing quotes, backslashes, spaces and symbols in
+    `tests/unit/test_memory_roles.py`) — never by hand, `repr()`, string
+    concatenation or manual escaping. `role_name` is additionally composed
+    via `psycopg.sql.Identifier` on top of (not instead of)
+    `validate_identifier`'s regex allowlist below, so identifier safety
+    does not rest on `sql.Identifier` alone. `password` is never logged.
     """
+
+    from psycopg import sql
 
     validate_identifier(role_name, label="role name")
 
@@ -86,16 +102,24 @@ def create_least_privilege_role(
                 # least-privilege flags rather than assuming a role left
                 # over from an earlier run still has them.
                 cursor.execute(
-                    f"ALTER ROLE {role_name} WITH LOGIN PASSWORD %s "
-                    "NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;",
-                    (password,),
+                    sql.SQL(
+                        "ALTER ROLE {role} WITH LOGIN PASSWORD {password} "
+                        "NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;"
+                    ).format(
+                        role=sql.Identifier(role_name),
+                        password=sql.Literal(password),
+                    )
                 )
                 return
 
             cursor.execute(
-                f"CREATE ROLE {role_name} WITH LOGIN PASSWORD %s "
-                "NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;",
-                (password,),
+                sql.SQL(
+                    "CREATE ROLE {role} WITH LOGIN PASSWORD {password} "
+                    "NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;"
+                ).format(
+                    role=sql.Identifier(role_name),
+                    password=sql.Literal(password),
+                )
             )
 
 
