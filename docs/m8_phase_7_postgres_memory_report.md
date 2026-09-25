@@ -589,11 +589,11 @@ committed anywhere in this branch's diff.
 
 ## 25. Blockers
 
-1. **No PostgreSQL instance reachable** (no Docker daemon; no
-   `AP_AGENT_POSTGRES_DSN`). `tests/integration/test_memory_postgres_integration.py`
-   (16 tests covering migrations, tenant isolation, append-only triggers, idempotency/
-   conflict detection at the real-RLS level, and runtime-role privilege checks) is
-   written but unexecuted — reported as blocked, not claimed as passing (§18).
+1. **No PostgreSQL instance reachable.** Superseded by §27: a dedicated
+   `AP_AGENT_TEST_POSTGRES_DSN` was later provided and the suite was rewired to use
+   it, but this sandbox's network-egress policy blocks the destination host entirely
+   (confirmed at the TCP level, not an application-layer failure) — see §27 for the
+   full diagnosis, the harness rewrite, and what is required to unblock it.
 2. **PaddleOCR unavailable** (not installed; installing + downloading models judged
    out of scope/too heavy for this session). The `requires_paddle`-marked, OCR-inclusive
    semantic-parity path is untested in this session (§16); the fast,
@@ -613,3 +613,184 @@ never makes a business decision (approve/reject/pay), matching task §2's
 through deterministic validation and the memory service." No orchestration, FastAPI,
 UI or LLM-reasoning code was added in this milestone, per the task's explicit
 instruction not to begin it.
+
+## 27. PostgreSQL acceptance gate (follow-up pass)
+
+A dedicated, isolated Neon test database was later provided via
+`AP_AGENT_TEST_POSTGRES_DSN` (database `ap_agent_m8_test`), with instructions to run
+the full `requires_postgres` suite against it, add a genuinely least-privilege
+non-owner test runtime role, and fix any real defect found — never weaken tests, mock
+PostgreSQL, or claim a passing result that did not actually execute.
+
+### 27.1 Harness rewrite
+
+`tests/integration/test_memory_postgres_integration.py` was rewritten in full:
+
+- **DSN sourcing.** Reads only `AP_AGENT_TEST_POSTGRES_DSN`; never reads or falls back
+  to `AP_AGENT_POSTGRES_DSN`/`AP_AGENT_POSTGRES_MIGRATION_DSN` (the production
+  variable names). Confirmed by inspection: `grep -n
+  "AP_AGENT_POSTGRES_DSN\|AP_AGENT_POSTGRES_MIGRATION_DSN"
+  tests/integration/test_memory_postgres_integration.py` matches nothing.
+- **Fail-closed database-identity gate**, in two layers: (1) the DSN's `dbname`
+  parameter is checked against `ap_agent_m8_test` *before* any connection is opened
+  (a static, pre-network check); (2) after the first successful connection,
+  `current_database()` is checked again, live. Either mismatch is `pytest.fail` (a
+  loud, hard stop — not a silent skip), and no destructive statement runs. An unset
+  `AP_AGENT_TEST_POSTGRES_DSN` is a plain `pytest.skip` (an expected, non-alarming
+  state), kept distinct from the mismatch case on purpose.
+- **Dedicated least-privilege runtime role.** New module
+  `src/ap_agent/db/roles.py` (`create_least_privilege_role`, `grant_schema_access`,
+  `role_privilege_flags`, plus the shared `validate_identifier` SQL-identifier
+  guard used by both). The suite's `runtime_role_ready` fixture creates
+  `ap_agent_m8_test_runtime` (`LOGIN`, `NOSUPERUSER NOBYPASSRLS NOCREATEDB
+  NOCREATEROLE`, a fresh `secrets.token_urlsafe(32)` password generated once per test
+  session, held only in memory) using the provided DSN's role purely as
+  migration/role-owner, and asserts `superuser is False and bypassrls is False`
+  before any other fixture in the module can run. Every test except the migration
+  tests themselves (which legitimately need schema-creation privilege) connects
+  through this dedicated role, not the owner. `scripts/migrate.py` was refactored to
+  call the same `ap_agent.db.roles.grant_schema_access` instead of duplicating the
+  grant SQL inline.
+- **Sixteen tests, one per required behaviour** (`grep -c "^def test_"` confirms
+  exactly 16): clean migration application, idempotent migration rerun,
+  migration-checksum mismatch rejection (now a *real* round trip — the correct
+  checksum is tampered directly in `ap_agent.schema_migrations` via the owner
+  connection, `apply_migration` is proven to reject it, then the correct checksum is
+  restored in a `finally` block), concurrent migration locking, tenant row-level read
+  isolation, cross-tenant write rejection (a raw `INSERT` under a mismatched
+  `tenant_id` while the runtime role's RLS context is set to a different tenant,
+  asserted to raise — real `WITH CHECK` enforcement, not application logic),
+  append-only UPDATE/DELETE/TRUNCATE rejection (three tests), payload-hash
+  verification, transaction rollback on failure (a valid `INSERT` followed, in the
+  same transaction, by one violating `phase_reference_workflow_fk`; asserts the valid
+  row is not visible afterward), idempotent persistence, connection reuse without
+  tenant-context leakage (via `ap_agent.db.connection.create_connection_pool`, not a
+  fresh connection per checkout, so it actually exercises pooled-connection reuse),
+  batch persistence, cross-document isolation, and retrieval fidelity (`Decimal`
+  precision and `None` round-trip explicitly asserted).
+- Never prints, logs, or writes the DSN or password anywhere; the one file this suite
+  writes (`/tmp/ap_agent_m8_postgres_probe.json`, outside the repository, never
+  committed) holds only `database`, `server_version`, `server_timezone` and a
+  hostname reduced to its last two DNS labels (`_redact_host`) — and, as it turned
+  out, was never actually written this run (§27.3: the probe never got that far).
+
+### 27.2 Network diagnosis
+
+Before assuming a code-level cause, connectivity was diagnosed directly, independent
+of any test:
+
+1. `psycopg.connect(...)` against the DSN's own host on port 5432 → `connection
+   timeout expired` against every resolved address (three IPv4, three IPv6).
+2. A raw `socket.connect((host, 5432))`, bypassing psycopg/libpq entirely → also
+   times out. DNS resolution itself succeeds (the hostname resolves to real
+   addresses), ruling out a DNS problem.
+3. Neon's pooler endpoint on port 443 (Neon's own documented fallback for networks
+   that only permit port 443) → the raw TCP connect *succeeds*, but the TLS/SSL
+   negotiation immediately fails: `received invalid response to SSL negotiation: H`
+   — the leading `H` is the first byte of an HTTP response. This environment's own
+   egress infrastructure answers port-443 connections to non-allowlisted hosts with
+   an HTTP response instead of forwarding the bytes; it does not reach Neon at all.
+4. `read_documentation(topic="environment.network", situation="blocked")` (the
+   Claude Code Remote environment-docs tool) confirms this is exactly the documented
+   failure mode: "the environment's network policy denied the host" — resolved by
+   the environment owner adding the host to the allowed domains (or broadening the
+   network access level) in the cloud environment's own settings, not from inside
+   the session.
+
+No further connectivity workaround was attempted beyond this diagnosis: the block is
+a deliberate egress allowlist, not a misconfiguration, and routing around a
+security boundary from inside the sandboxed session would be exactly the wrong
+response to it.
+
+### 27.3 Result: `pytest -m requires_postgres -vv`
+
+```
+16 errors in 90.88s
+```
+
+All 16 tests **executed** — each opened a real connection attempt against the real
+`AP_AGENT_TEST_POSTGRES_DSN` host, per the diagnosis above — and every one **errored**
+at the connection layer (`psycopg.OperationalError: connection is bad`), before
+reaching a single assertion. None were skipped, none were deselected, and none were
+mocked: the harness change in §27.1 is proven correct up to the exact point this
+sandbox's network policy stops it. Because no connection ever completed, **no
+migration, RLS, or append-only behaviour was verified against real PostgreSQL in this
+pass** — reported here as still-blocked, not claimed as passing.
+
+- **Redacted database/PostgreSQL version information**: none obtained.
+  `_verify_live_database_identity` never got past `open_connection`, so
+  `current_database()`/`server_version` were never read, and
+  `/tmp/ap_agent_m8_postgres_probe.json` was never written. The only confirmed fact
+  is the DSN's own declared `dbname=ap_agent_m8_test` (parsed locally, never
+  connected) and that its hostname ends `...neon.tech` (Neon-hosted).
+- **Migration result**: blocked (unexecuted against real PostgreSQL).
+- **RLS result**: blocked (unexecuted against real PostgreSQL). The harness-level
+  requirement — a genuinely non-owner, `NOSUPERUSER`/`NOBYPASSRLS` runtime role,
+  created fresh per session and used for every RLS-sensitive test — is implemented
+  and ready (§27.1), but its own `role_privilege_flags` assertion never ran either,
+  for the same reason.
+- **Append-only result**: blocked (unexecuted against real PostgreSQL).
+
+### 27.4 Defects found and corrections made in this pass
+
+1. **Harness used the wrong (production-named) DSN variables and had no fail-closed
+   database-identity check.** The prior `test_memory_postgres_integration.py` read
+   `AP_AGENT_POSTGRES_DSN`/`AP_AGENT_POSTGRES_MIGRATION_DSN` — unset in any
+   environment that only provides a dedicated test DSN, which would have made every
+   test `KeyError` rather than either running correctly or skipping cleanly. Fixed:
+   rewritten to read `AP_AGENT_TEST_POSTGRES_DSN` only, with the two-layer
+   fail-closed database-identity gate in §27.1.
+2. **RLS tests would have run through the schema owner, not a least-privilege role.**
+   The prior suite's `runtime_dsn` fixture was just `os.environ["AP_AGENT_POSTGRES_DSN"]`
+   — with no separate role-creation step, "RLS acceptance" could never have meant
+   what it needs to mean. Fixed: `ap_agent.db.roles` + the `runtime_role_ready`
+   fixture (§27.1), asserted non-superuser/non-bypassrls before any RLS-sensitive
+   test can run.
+3. **Five required behaviours had no dedicated test**: payload-hash verification,
+   transaction rollback on failure, batch persistence, cross-document isolation, and
+   retrieval fidelity were previously only exercised through
+   `tests/support/fake_memory_repository.FakeMemoryRepository` (no real database),
+   not through `PostgresMemoryRepository` against real PostgreSQL. Fixed: added as
+   five of the sixteen tests in §27.1.
+4. **`grant_schema_access` SQL was duplicated** between `scripts/migrate.py` and what
+   this pass needed for the test runtime role. Fixed: extracted to
+   `ap_agent.db.roles.grant_schema_access`, used by both.
+
+No defect was found in the already-shipped M8A-M8D production code
+(`models/memory.py`, `config/postgres.py`, `db/connection.py`,
+`db/migration_runner.py`, `repositories/*.py`, `services/memory_service.py`) during
+this pass — every correction above is in test harness/tooling, not in the modules a
+future orchestrator would call.
+
+### 27.5 Full-regression result: `pytest -vv`
+
+```
+3 failed, 654 passed, 6 skipped, 16 errors in 188.71s (679 collected)
+```
+
+The 3 failures are the same pre-existing, unrelated `paddleocr`-adapter failures
+documented in §16/§18 (package not installed, not `requires_paddle`-marked — out of
+this milestone's scope; per this pass's instructions, "PaddleOCR should use the
+existing validation environment," so no change was made there). The 6 skips are the
+`requires_paddle`-marked tests self-skipping as designed. The 16 errors are the
+`requires_postgres` suite, blocked per §27.3. Every other test — including all 654
+non-PostgreSQL, non-PaddleOCR M1-M8 tests, and the 14 new tests added in this pass
+(`tests/unit/test_memory_roles.py`, plus one more module added to
+`test_memory_no_eager_psycopg_import.py`'s coverage list) — passes. **Target of zero
+failures was not reached**: the target explicitly required all `requires_postgres`
+tests to execute without skipping, which they did, but this environment's network
+policy prevents them from completing successfully, and per instructions no test was
+weakened, mocked, or excluded to force a different number.
+
+### 27.6 Final merge-readiness conclusion
+
+**Not safe to merge.** The harness is now correctly wired to a dedicated,
+production-isolated test database and a genuinely least-privilege runtime role, and
+every required behaviour has dedicated, real-PostgreSQL-targeting test code — but
+none of it has actually executed successfully yet, because this sandboxed
+environment's network-egress policy blocks the only reachable database host (§27.2).
+Migration, RLS and append-only behaviour against real PostgreSQL remain unverified.
+**To unblock**: the environment owner adds the Neon test host to this Claude Code
+environment's allowed network destinations (or broadens its network access level) in
+the cloud environment's settings, then `pytest -m requires_postgres -vv` should be
+re-run from this same branch — the harness needs no further code change to do so.

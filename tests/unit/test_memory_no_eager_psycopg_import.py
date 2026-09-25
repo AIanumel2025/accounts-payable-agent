@@ -26,6 +26,7 @@ _MODULES = (
     "ap_agent.db.connection",
     "ap_agent.db.migration_runner",
     "ap_agent.db.migration_manifest",
+    "ap_agent.db.roles",
     "ap_agent.repositories.memory_repository",
     "ap_agent.repositories.mapping",
     "ap_agent.repositories.postgres_memory_repository",
