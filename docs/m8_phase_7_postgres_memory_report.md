@@ -794,3 +794,77 @@ Migration, RLS and append-only behaviour against real PostgreSQL remain unverifi
 environment's allowed network destinations (or broadens its network access level) in
 the cloud environment's settings, then `pytest -m requires_postgres -vv` should be
 re-run from this same branch — the harness needs no further code change to do so.
+
+## 28. Second acceptance-gate attempt: DSN now targets the wrong database
+
+A later pass was asked to re-confirm four things before re-running the suite: branch
+`claude/m8-phase-7-postgres-memory`, commit `29a015a` present, `AP_AGENT_TEST_POSTGRES_DSN`
+set, the configured database `ap_agent_m8_test`, and the Neon host now reachable —
+then run `pytest -m requires_postgres -vv` and, if all 16 passed, the full regression
+suite.
+
+**Preflight (confirmed):**
+- Branch: `claude/m8-phase-7-postgres-memory` (current). Commit `29a015a` present in
+  `git log` (HEAD of the branch at the time of this pass).
+- `AP_AGENT_TEST_POSTGRES_DSN`: set (non-empty; value never printed or logged).
+
+**Preflight (found false — reported, not silently worked around):**
+- **Database name.** Parsing `AP_AGENT_TEST_POSTGRES_DSN` with `psycopg.conninfo.conninfo_to_dict`
+  — the exact method `_owner_dsn_or_skip` uses — gives `dbname='neondb'`, not
+  `ap_agent_m8_test`. Confirmed twice independently: once via the parser, once by a
+  direct string check (`'/neondb' in dsn` is `True`, `'ap_agent_m8_test' in dsn` is
+  `False`, one `dbname=` occurrence in the whole string). This is the exact
+  fail-closed condition `_owner_dsn_or_skip` (§27.1) is designed to refuse: "this
+  suite executes destructive statements ... and must never run against a database
+  that might be production."
+- **Host reachability.** A raw `socket.connect()` (5s timeout, bypassing psycopg
+  entirely) to all three resolved IPv4 addresses on port 5432 still times out —
+  the identical failure mode diagnosed in §27.2. DNS resolution itself still
+  succeeds (six addresses returned). `read_documentation(topic="environment.network",
+  situation="blocked")` confirms this is still the environment's own network-egress
+  allowlist denying the host, not a Neon-side or code-level problem.
+
+**Result of `pytest -m requires_postgres -vv`:**
+
+```
+663 deselected, 16 errors in 0.74s
+```
+
+All 16 tests errored at `tests/integration/test_memory_postgres_integration.py:109`,
+every one with the identical message:
+
+```
+Failed: AP_AGENT_TEST_POSTGRES_DSN targets database 'neondb', expected
+'ap_agent_m8_test'. Refusing to run (fail-closed): this suite executes destructive
+statements (UPDATE/DELETE/TRUNCATE rejection tests, role creation, transaction-
+rollback tests) and must never run against a database that might be production.
+```
+
+This is the static, pre-network `dbname` gate (§27.1, layer 1) firing correctly and
+as designed — it stopped every test before a single connection was attempted, so the
+still-open network block (above) was never even reached this time. No migration,
+RLS, append-only, payload-hash, rollback, batch-persistence, cross-document-isolation,
+retrieval-fidelity, or connection-pool-leakage behaviour was exercised against real
+PostgreSQL in this pass, for the same underlying reason as §27.3 plus this new,
+separate database-identity mismatch. None of the 16 tests were skipped, deselected,
+mocked, or weakened; `EXPECTED_TEST_DATABASE` and the gate itself were left
+unmodified, per this pass's own instructions and the harness's own stated safety
+rationale (§27.1) — changing either to make `neondb` pass would defeat the exact
+protection the gate exists to provide.
+
+**Not run in this pass:** the full regression suite (`pytest -vv -m "requires_postgres
+or requires_paddle or not requires_postgres"`), because its own precondition —
+all 16 `requires_postgres` tests passing — was not met.
+
+**Conclusion: still not safe to merge, and now blocked on two independent causes**,
+not one:
+1. The provided `AP_AGENT_TEST_POSTGRES_DSN` declares `dbname=neondb`, not the
+   `ap_agent_m8_test` database the harness's safety gate requires. Resolving this is
+   an environment/credential decision (supply a DSN whose `dbname` is genuinely
+   `ap_agent_m8_test`, or confirm `neondb` actually *is* the intended disposable test
+   database and have a human deliberately update `EXPECTED_TEST_DATABASE` — not
+   something this pass changed unilaterally) rather than a code defect.
+2. Independently of (1), this sandbox's network-egress policy still blocks the Neon
+   host's port 5432 at the TCP level (§27.2), unchanged since the previous pass.
+
+No source or test code was changed in this pass; only this report was updated.
