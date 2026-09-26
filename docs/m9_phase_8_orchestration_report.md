@@ -165,7 +165,7 @@ New tests (no M8 production code touched):
   (`requires_postgres`, appended to the existing M8 acceptance suite, reusing
   its `repository`/`tenant` fixtures): the same two scenarios against real
   PostgreSQL/RLS. `AP_AGENT_TEST_POSTGRES_DSN` is unset in this environment (see
-  §16 for the blocker this repeats from M8), so these two collect correctly but
+  §17 for the blocker this repeats from M8), so these two collect correctly but
   do not execute here; `.github/workflows/m8-postgres-acceptance.yml`'s branch
   condition was extended to include `claude/m9-phase-8-orchestration` so they
   run in CI on this PR.
@@ -318,7 +318,7 @@ All four controlled fixtures, run through the real modular Phase 1-7 tools via
 `ProductionPhaseBindings` + `execute_invoice_workflow`, with the real PaddleOCR
 engine (no forced Tesseract fallback) and Stage 7 backed by
 `MemoryService`+`FakeMemoryRepository` (no live PostgreSQL in this
-environment — see §16):
+environment — see §17):
 
 | Fixture | Workflow status | Terminal route | Stages | PO / Supplier |
 |---|---|---:|---:|---|
@@ -337,7 +337,50 @@ every phase boundary, persisted/in-memory agreement, and the specific
 non-inference/missing-value assertions (Template/Aaron supplier name missing,
 warped grand total missing, never fabricated).
 
-## 15. Deviations from the notebook
+## 15. Validation sequence (task §20)
+
+Run in order, in `.venv` with `pip install -e ".[dev,postgres,preprocessing,
+ocr-tesseract]"` plus `paddlepaddle==3.3.1 paddleocr==3.7.0` (this session
+installed all four; a fresh sandbox is not guaranteed to have outbound access
+for the last one -- see §17):
+
+1. **Formatting/static checks**: none are configured by this repository
+   (no `ruff`/`black`/`mypy`/`flake8` section in `pyproject.toml`, no
+   pre-commit config). `python -m py_compile` on every new/changed file and
+   successful `pytest` collection (no `ImportError`/`SyntaxError`) stood in for
+   this step.
+2. **New M9 unit tests**: 98 (`test_orchestration_contracts.py` 26 +
+   `test_orchestration_routing.py` 37 + `test_orchestration_engine.py` 26 +
+   remainder split across files as counted by pytest) plus 9
+   `test_orchestration_batch.py` + 9 `test_orchestration_observability.py` = all
+   passed individually before being folded into the fast suite below.
+3. **Existing unit tests** and **4. fast integration tests**: covered by step 5.
+5. `pytest -m "not requires_paddle and not requires_postgres" -vv`:
+   **806 passed, 46 deselected**, 470.18s.
+6. `pytest -m requires_postgres -vv`: **19 skipped, 834 deselected**, 4.20s.
+   `AP_AGENT_TEST_POSTGRES_DSN` unset (§17) -- every `requires_postgres` test,
+   old and new, skips (never fails) via the same fail-closed DSN gate
+   `test_memory_postgres_integration.py` already established.
+7. `pytest -m requires_paddle -vv`: **28 passed, 1 skipped, 824 deselected**,
+   2228.51s (37m08s). The one skip is
+   `test_phase_8_full_acceptance_both_providers.py` (also `requires_postgres`;
+   skips for the same DSN reason as step 6, not a PaddleOCR failure). All 28
+   passes include every pre-existing `requires_paddle` test in the repository
+   (Phase 1-3/1-4/1-5/1-6 pipeline goldens, Phase 3 PaddleOCR-page-coverage
+   test) plus every new M9 `requires_paddle` test (4 namespace-isolation, 18
+   four-fixture orchestration, both parametrized correctly) -- confirms this
+   milestone did not regress any earlier milestone's real-PaddleOCR behaviour.
+8. **Full Phase 1-8 acceptance test requiring both providers**:
+   `test_phase_8_full_acceptance_both_providers.py` exists (task §16, "any full
+   end-to-end test requiring both providers") and collects correctly, but
+   skipped in both runs above because `AP_AGENT_TEST_POSTGRES_DSN` is unset
+   (§17) -- it is reported here as **skipped, not passed**, per task §20's
+   explicit instruction not to describe a skipped provider test as passed.
+9. **Full regression, no unintended deselection**: `pytest -vv` (no marker
+   filter) -- see §17 for this run's result and whether it completed in this
+   session.
+
+## 16. Deviations from the notebook
 
 1. **Structured Phase 5/6 `FAILED` handling** (§11): production classifies with
    the phase's own `failure_class`/`errors`/`review_reasons` via
@@ -365,7 +408,7 @@ warped grand total missing, never fabricated).
 None of these change the notebook's own validated four-fixture outcome (§14
 reproduces it exactly).
 
-## 16. Blockers
+## 17. Blockers
 
 - **PostgreSQL**: `AP_AGENT_TEST_POSTGRES_DSN` is unset in this environment —
   the same blocker M8's own report documents. The two new `requires_postgres`
@@ -381,12 +424,12 @@ reproduces it exactly).
   suites (namespace-isolation PO-backed fixtures, §4; four-fixture acceptance,
   §14) executed for real and are reported as passed, not skipped.
 
-## 17. Readiness recommendation
+## 18. Readiness recommendation
 
 Orchestration modularisation is complete and behaviourally verified against the
 notebook's own validated four-fixture run, with one deliberate, documented,
 task-directed improvement (§11/§15.1) that does not change that outcome. The
 M8 retrieval-scoping audit found no defect requiring a production change.
 Recommend proceeding to the human-review interface and subsequent agent
-reasoning layer once the PostgreSQL-backed acceptance run (§16) is confirmed
+reasoning layer once the PostgreSQL-backed acceptance run (§17) is confirmed
 green in CI.
