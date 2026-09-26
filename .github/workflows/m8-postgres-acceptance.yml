@@ -29,8 +29,16 @@ jobs:
   postgres-acceptance:
     # pull_request's `branches` filter matches the PR's base branch, not
     # its head branch, so the head branch is checked here instead — this
-    # job must run only for PR #8's own branch, never for an unrelated PR.
-    if: github.event_name != 'pull_request' || github.head_ref == 'claude/m8-phase-7-postgres-memory'
+    # job must run only for the M8/M9 PostgreSQL-memory branches' own PRs,
+    # never for an unrelated PR. M9 (orchestration) added its own
+    # requires_postgres tests to tests/integration/test_memory_postgres_integration.py
+    # (the M8 retrieval-hardening audit, task brief §5/§15) rather than a
+    # new file, so its branch is added here rather than duplicating this
+    # workflow.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.head_ref == 'claude/m8-phase-7-postgres-memory' ||
+      github.head_ref == 'claude/m9-phase-8-orchestration'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

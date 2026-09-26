@@ -1,0 +1,85 @@
+{
+  "golden_baseline_version": "1.0",
+  "source": "M9 task brief §2/§17, cross-checked against notebooks/accounts_payable_pipeline.ipynb Phase 8 Cell 5's own real orchestration run and tests/golden/phase_6_expected_results.json (the same four documents' Phase 6 outcomes, which Stage 6/REFERENCE_MATCHING of this baseline restates for convenience).",
+  "purpose": "Phase 8 workflow-orchestration parity baseline for the four controlled fixtures declared in tests/fixtures/invoices/manifest.json, run through the real modular Phase 1-7 pipeline (PaddleOCR primary, no forced Tesseract fallback) via ap_agent.orchestration.engine.execute_invoice_workflow and ap_agent.orchestration.handlers.ProductionPhaseBindings.",
+  "environment_note": "Semantic values only; no timestamps, event IDs, or OCR pixel/box geometry are recorded here (task §17: 'Do not copy volatile timestamps or environment-dependent OCR geometry into the semantic golden baseline.').",
+  "stages": [
+    "INGESTION",
+    "PREPROCESSING",
+    "OCR",
+    "NORMALIZATION",
+    "FINANCIAL_VALIDATION",
+    "REFERENCE_MATCHING",
+    "MEMORY_PERSISTENCE"
+  ],
+  "documents": [
+    {
+      "filename": "Template1_Instance90.jpg",
+      "workflow_status": "REVIEW_REQUIRED",
+      "terminal_route": "HUMAN_REVIEW",
+      "review_required": true,
+      "stages_executed": 7,
+      "failed_stages": 0,
+      "purchase_order_number": "99",
+      "purchase_order_status": "MATCHED",
+      "supplier_status": "NOT_FOUND",
+      "supplier_id": null,
+      "missing_values_remain_missing": [
+        "supplier_name",
+        "line_item_totals"
+      ]
+    },
+    {
+      "filename": "08181_flat_document.png",
+      "workflow_status": "SUCCEEDED",
+      "terminal_route": "COMPLETED",
+      "review_required": false,
+      "stages_executed": 7,
+      "failed_stages": 0,
+      "purchase_order_number": null,
+      "purchase_order_status": "NOT_REFERENCED",
+      "supplier_status": "MATCHED",
+      "supplier_id": "SUP-001",
+      "missing_values_remain_missing": []
+    },
+    {
+      "filename": "invoice_Aaron Bergman_36258.pdf",
+      "workflow_status": "REVIEW_REQUIRED",
+      "terminal_route": "HUMAN_REVIEW",
+      "review_required": true,
+      "stages_executed": 7,
+      "failed_stages": 0,
+      "purchase_order_number": "CA-2012-AB10015140-40974",
+      "purchase_order_status": "MATCHED",
+      "supplier_status": "NOT_FOUND",
+      "supplier_id": null,
+      "missing_values_remain_missing": [
+        "supplier_name"
+      ]
+    },
+    {
+      "filename": "08181_warped_document_perspective_shadow.jpg",
+      "workflow_status": "REVIEW_REQUIRED",
+      "terminal_route": "HUMAN_REVIEW",
+      "review_required": true,
+      "stages_executed": 7,
+      "failed_stages": 0,
+      "purchase_order_number": null,
+      "purchase_order_status": "NOT_REFERENCED",
+      "supplier_status": "MATCHED",
+      "supplier_id": "SUP-001",
+      "missing_values_remain_missing": [
+        "grand_total (no inferred warped total)"
+      ]
+    }
+  ],
+  "aggregate_expected": {
+    "invoices_orchestrated": 4,
+    "completed_automatically": 1,
+    "routed_to_human_review": 3,
+    "failed_workflows": 0,
+    "processing_stages_per_invoice": 7,
+    "postgresql_memory_writes": 4,
+    "unhandled_exceptions": 0
+  }
+}
