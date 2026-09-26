@@ -5,6 +5,16 @@ name: M8 PostgreSQL acceptance
 # here instead, never from the sandbox. See
 # docs/m8_phase_7_postgres_memory_report.md §27-29 for the sandbox-side
 # diagnosis this workflow replaces.
+#
+# M9 (task brief §16/§20 step 8) extended this job to also install the
+# real PaddleOCR engine, so the one test marked both `requires_postgres`
+# and `requires_paddle`
+# (tests/integration/test_phase_8_full_acceptance_both_providers.py) can
+# actually run here instead of permanently skipping for lack of a second
+# provider -- `pytest -m requires_postgres` already selects it (marker
+# selection is not exclusive: a test carrying both markers matches either
+# `-m` filter), so no change to the run command was needed, only to what
+# this job installs.
 
 on:
   pull_request:
@@ -40,7 +50,14 @@ jobs:
       github.head_ref == 'claude/m8-phase-7-postgres-memory' ||
       github.head_ref == 'claude/m9-phase-8-orchestration'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Generous headroom for a cold run: paddlepaddle's wheel alone is
+    # several hundred MB, and PP-OCRv6's detection/recognition/orientation/
+    # unwarping models (downloaded on first `create_engine()` call, cached
+    # below) add a few more minutes beyond that on an uncached runner. The
+    # actual test time (four real fixtures through the full Phase 1-8
+    # pipeline plus the rest of the requires_postgres suite) was ~7
+    # minutes in this milestone's own sandbox run.
+    timeout-minutes: 60
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -61,19 +78,40 @@ jobs:
             exit 1
           fi
 
+      # PaddleOCR/PaddleX cache their downloaded model weights outside
+      # pip's own cache (setup-python's `cache: pip` above only covers
+      # installed packages, not these): PP-OCRv6 detection/recognition,
+      # the textline-orientation classifier and the UVDoc unwarping model
+      # land under ~/.paddlex and ~/.cache/huggingface/hub (PaddleX's
+      # HuggingFace-hub-backed download path), and paddlepaddle itself
+      # keeps a small compile/inference cache under ~/.cache/paddle.
+      # Keying on the pinned versions in pyproject.toml means a version
+      # bump invalidates the cache instead of silently reusing stale
+      # weights.
+      - name: Cache PaddleOCR model weights
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.paddlex
+            ~/.cache/huggingface/hub
+            ~/.cache/paddle
+          key: paddleocr-models-paddlepaddle-3.3.1-paddleocr-3.7.0
+
       # Extras chosen to match what tests/ actually imports at collection
       # time: dev (pytest), postgres (psycopg[binary], psycopg_pool) for
-      # the requires_postgres suite itself, and preprocessing/ocr-tesseract
+      # the requires_postgres suite, preprocessing/ocr-tesseract
       # (numpy, opencv-python-headless, Pillow, pymupdf, pytesseract) so
       # the rest of tests/ collects cleanly under testpaths=["tests"]
-      # without spurious collection errors. ocr-paddle is deliberately
-      # excluded: no test file imports paddleocr/paddlepaddle at module
-      # level (ap_agent's adapters import it lazily per CLAUDE.md), and
-      # it is not needed to collect or run the requires_postgres suite.
-      - name: Install project, test and PostgreSQL dependencies
+      # without spurious collection errors, and the project's pinned
+      # PaddleOCR dependencies (paddlepaddle==3.3.1, paddleocr==3.7.0 --
+      # ap_agent's own [ocr-paddle] extra in pyproject.toml) so
+      # tests/integration/test_phase_8_full_acceptance_both_providers.py
+      # (requires_postgres AND requires_paddle) can run for real: no mock
+      # engine, no forced Tesseract fallback.
+      - name: Install project, test, PostgreSQL and PaddleOCR dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,postgres,preprocessing,ocr-tesseract]"
+          pip install -e ".[dev,postgres,preprocessing,ocr-tesseract,ocr-paddle]"
 
       - name: Run PostgreSQL acceptance suite
         env:
