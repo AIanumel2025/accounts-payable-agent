@@ -53,11 +53,13 @@ jobs:
     # Generous headroom for a cold run: paddlepaddle's wheel alone is
     # several hundred MB, and PP-OCRv6's detection/recognition/orientation/
     # unwarping models (downloaded on first `create_engine()` call, cached
-    # below) add a few more minutes beyond that on an uncached runner. The
-    # actual test time (four real fixtures through the full Phase 1-8
-    # pipeline plus the rest of the requires_postgres suite) was ~7
-    # minutes in this milestone's own sandbox run.
-    timeout-minutes: 60
+    # below) add a few more minutes beyond that on an uncached runner. This
+    # job now runs the real-provider pipeline twice per invocation (the
+    # targeted `requires_postgres` suite, confirmed to run in ~10.5 minutes
+    # in run 36249880424, then the full unfiltered regression below, which
+    # re-exercises the same real-PaddleOCR/real-Postgres tests plus the
+    # rest of the fast suite), so the budget is doubled with margin.
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -113,7 +115,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,postgres,preprocessing,ocr-tesseract,ocr-paddle]"
 
+      # The `ocr-tesseract` extra above is only the `pytesseract` Python
+      # binding; the fast/full suite's Tesseract-fallback pipeline tests
+      # (tests/integration/test_phase_1_to_*_pipeline.py's non-`requires_paddle`
+      # variants, tests/unit/test_tesseract_adapter.py) additionally need
+      # the real `tesseract` system binary on PATH, which a bare
+      # `ubuntu-latest` runner is not guaranteed to carry. Only needed for
+      # the full unfiltered regression below -- the targeted
+      # `requires_postgres` suite above never exercises Tesseract.
+      - name: Install Tesseract OCR system binary
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+
       - name: Run PostgreSQL acceptance suite
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
         run: pytest -m requires_postgres -vv
+
+      # M9 task brief §20 step 9 / hotfix follow-up: with both real
+      # providers now available in this job, run the complete, unfiltered
+      # suite (no `-m` filter) so nothing required is left skipped,
+      # deselected, or unexecuted. Uses the same DSN and the same
+      # already-installed PaddleOCR engine as the step above.
+      - name: Run full unfiltered regression suite
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+        run: pytest -vv
