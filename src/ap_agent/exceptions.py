@@ -33,6 +33,18 @@ collision); this module upgrades them to structured, typed exceptions
 following the same precedent as `NormalizationIntegrityError` /
 `FinancialValidationIntegrityError` / `MatchingIntegrityError`, without
 changing which cases fail closed.
+
+`PrivilegedRoleError` is new in M9's PostgreSQL-acceptance-workflow fix
+(`ap_agent.db.roles.create_least_privilege_role`): raised when a runtime
+role that already exists (from an earlier CI run against the same
+persistent test database) is found to carry `SUPERUSER`, `BYPASSRLS`,
+`CREATEDB`, `CREATEROLE`, or any other privilege beyond the expected
+least-privilege set. The role is never "fixed" automatically -- a role
+administrator without `SUPERUSER` cannot alter `SUPERUSER`/`BYPASSRLS`
+even to reassert their current value (`ALTER ROLE ... NOSUPERUSER` fails
+with `psycopg.errors.InsufficientPrivilege` unless the caller is itself a
+superuser), so silently retrying or downgrading the role is not an option;
+this fails closed instead.
 """
 
 from typing import Any
@@ -48,6 +60,7 @@ __all__ = [
     "MigrationIntegrityError",
     "TenantContextError",
     "MemoryIntegrityError",
+    "PrivilegedRoleError",
 ]
 
 
@@ -152,6 +165,20 @@ class TenantContextError(Exception):
     (task §5: "Verify that the tenant context was applied ... Missing
     tenant context must fail closed"). Mirrors the notebook's
     `set_memory_tenant` (cell 88), which raised a bare `RuntimeError`."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class PrivilegedRoleError(Exception):
+    """Raised when a PostgreSQL role that `ap_agent.db.roles
+    .create_least_privilege_role` expected to be least-privilege already
+    exists with `SUPERUSER`, `BYPASSRLS`, `CREATEDB`, `CREATEROLE`, or any
+    other unexpectedly elevated attribute. Fail closed: the caller must
+    not proceed to use this role for RLS-sensitive testing, and this
+    module never attempts to silently downgrade it."""
 
     def __init__(self, reason: str, details: dict[str, Any] | None = None):
         super().__init__(reason)

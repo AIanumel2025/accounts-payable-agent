@@ -829,3 +829,85 @@ def test_retrieval_fidelity(repository, tenant):
     assert fetched.source_document_sha256 == record.source_document_sha256
     assert fetched.goods_receipt_ids == record.goods_receipt_ids
     assert fetched.review_reasons == record.review_reasons
+
+
+# ==============================================================
+# 17. M9 §5 audit: current-run retrieval against real RLS, not just the
+# in-memory fake (tests/integration/test_m9_m8_retrieval_audit.py runs the
+# same scenario against FakeMemoryRepository on every push).
+# ==============================================================
+
+
+def test_m8_retrieval_audit_current_run_ids_only(repository, tenant):
+    """Seed an arbitrary number (9) of historical rows unrelated to a
+    'current run' of a different size (4) under the same tenant, then
+    retrieve only the current run's explicit document IDs. Must return
+    exactly those 4, leave the 9 historical rows stored, and never assume
+    a fixed fixture count (task §5)."""
+
+    historical_document_ids = [uuid.uuid4() for _ in range(9)]
+    for index, document_id in enumerate(historical_document_ids):
+        workflow = repository.create_or_get_workflow(
+            tenant_id=tenant, record=_workflow_record(tenant, document_id)
+        )
+        repository.store_invoice_memory(
+            tenant_id=tenant,
+            record=_invoice_memory_record(
+                tenant, workflow.memory_id, document_id, source_name=f"pg-historical-{index}.png"
+            ),
+        )
+
+    current_document_ids = [uuid.uuid4() for _ in range(4)]
+    for index, document_id in enumerate(current_document_ids):
+        workflow = repository.create_or_get_workflow(
+            tenant_id=tenant, record=_workflow_record(tenant, document_id)
+        )
+        repository.store_invoice_memory(
+            tenant_id=tenant,
+            record=_invoice_memory_record(
+                tenant, workflow.memory_id, document_id, source_name=f"pg-current-{index}.png"
+            ),
+        )
+
+    retrieved = {
+        document_id: repository.get_invoice_memory_by_document(tenant_id=tenant, document_id=document_id)
+        for document_id in current_document_ids
+    }
+
+    assert all(record is not None for record in retrieved.values())
+    assert {record.document_id for record in retrieved.values()} == set(current_document_ids)
+
+    for document_id in historical_document_ids:
+        historical = repository.get_invoice_memory_by_document(tenant_id=tenant, document_id=document_id)
+        assert historical is not None
+
+
+def test_m8_retrieval_audit_cross_tenant_isolation_with_colliding_document_id(repository):
+    """Real RLS, not application-layer filtering, must prevent tenant B
+    from ever retrieving tenant A's row for the same document_id."""
+
+    tenant_a = uuid.uuid4()
+    tenant_b = uuid.uuid4()
+
+    repository.register_tenant(
+        tenant_id=tenant_a, tenant_key=f"audit-a-{tenant_a.hex[:8]}", display_name="Audit Tenant A"
+    )
+    repository.register_tenant(
+        tenant_id=tenant_b, tenant_key=f"audit-b-{tenant_b.hex[:8]}", display_name="Audit Tenant B"
+    )
+
+    shared_document_id = uuid.uuid4()
+
+    workflow_a = repository.create_or_get_workflow(
+        tenant_id=tenant_a, record=_workflow_record(tenant_a, shared_document_id)
+    )
+    repository.store_invoice_memory(
+        tenant_id=tenant_a,
+        record=_invoice_memory_record(tenant_a, workflow_a.memory_id, shared_document_id, source_name="tenant-a.png"),
+    )
+
+    assert repository.get_invoice_memory_by_document(tenant_id=tenant_b, document_id=shared_document_id) is None
+    assert (
+        repository.get_invoice_memory_by_document(tenant_id=tenant_a, document_id=shared_document_id)
+        is not None
+    )
