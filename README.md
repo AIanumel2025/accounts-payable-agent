@@ -1,2 +1,504 @@
-# accounts-payable-agent
-An agent designed to automate the entire accounts payable workflow, including managing vendor invoice processing and bill payments
+# Accounts Payable Agent
+
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![CI](https://github.com/AIanumel2025/accounts-payable-agent/actions/workflows/m8-postgres-acceptance.yml/badge.svg)](https://github.com/AIanumel2025/accounts-payable-agent/actions/workflows/m8-postgres-acceptance.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+A modular, audit-friendly accounts payable agent that processes invoice PDFs and images from ingestion through financial validation, reference matching, PostgreSQL persistence, and workflow routing.
+
+The system extracts invoice data, validates financial relationships, matches invoices against supplier, purchase-order, and goods-receipt records, and routes each invoice either to automatic completion or human review.
+
+> **Project status:** Validated engineering prototype. The document-processing, memory, and orchestration layers are complete. The API and user interface are the next development milestones.
+
+## What the system does
+
+The agent currently supports:
+
+- PDF, PNG, and JPEG invoice ingestion.
+- Content hashing and deterministic document identities.
+- Image enhancement, deskewing, and quality assessment.
+- PaddleOCR as the primary OCR provider.
+- Tesseract as an OCR fallback.
+- Evidence-linked field extraction.
+- Normalisation into a unified invoice schema.
+- Decimal-safe financial validation.
+- Supplier-master resolution.
+- Purchase-order retrieval.
+- Goods-receipt retrieval.
+- Two-way and three-way invoice matching.
+- PostgreSQL workflow memory.
+- Tenant-aware data isolation.
+- Append-only audit and review records.
+- Deterministic workflow orchestration.
+- Bounded concurrent batch processing.
+- Automatic completion or human-review routing.
+
+The agent does **not** currently initiate payments, post invoices into an ERP, or make an irreversible financial decision.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A["PDF and image invoices"] --> B["Ingestion and preprocessing"]
+    B --> C["OCR and evidence capture"]
+    C --> D["Normalisation and financial validation"]
+    D --> E["Supplier, PO and receipt matching"]
+    E --> F["PostgreSQL workflow memory"]
+    F --> G{"Terminal route"}
+    G --> H["Completed"]
+    G --> I["Human review"]
+```
+
+The orchestration engine executes seven processing stages for each invoice:
+
+1. Ingestion
+2. Preprocessing
+3. OCR
+4. Normalisation
+5. Financial validation
+6. Reference matching
+7. Memory persistence
+
+It then assigns a terminal route of `COMPLETED` or `HUMAN_REVIEW`.
+
+## Pipeline phases
+
+| Phase | Capability | Main responsibility |
+|---|---|---|
+| 1 | Ingestion | Inspect files, calculate hashes, detect duplicates, and preserve originals |
+| 2 | Preprocessing | Render PDFs, improve images, deskew pages, and evaluate image quality |
+| 3 | OCR | Extract tokens, lines, bounding boxes, confidence, and evidence |
+| 4 | Normalisation | Convert OCR output into a unified invoice schema |
+| 5 | Financial validation | Check required values, arithmetic, subtotals, tax, and totals |
+| 6 | Reference matching | Resolve suppliers and match purchase orders and goods receipts |
+| 7 | Memory | Persist workflow state, invoice data, audit events, and review records |
+| 8 | Orchestration | Execute the complete workflow with routing, retry, and failure isolation |
+
+## Safety and reliability principles
+
+The project deliberately follows fail-closed financial-processing policies.
+
+### Missing-value non-inference
+
+The agent does not invent missing invoice values.
+
+For example, when a total is absent or unreadable, the result remains missing and the invoice is routed for review. A calculated value may be retained as validation evidence, but it is not silently substituted for the missing source value.
+
+### Review propagation
+
+An invoice requiring review in an earlier phase cannot be silently upgraded to automatic success by a later phase.
+
+### Deterministic identities
+
+Document, result, event, check, workflow, and correlation identifiers are reproducible from stable inputs. Timestamps do not affect deterministic identity generation.
+
+### Integrity verification
+
+The pipeline uses SHA-256 hashes to verify:
+
+- Uploaded documents.
+- Preserved source files.
+- Phase artifacts.
+- Persisted payloads.
+- Cross-phase handoffs.
+
+Missing, stale, tampered, or cross-document artifacts fail closed.
+
+### Tenant isolation
+
+PostgreSQL row-level security and explicit tenant identifiers protect tenant-scoped workflow data. Tests use a non-owner, least-privilege runtime role to exercise RLS behaviour.
+
+### Append-only audit history
+
+Audit events and human-review decisions are append-only. Database triggers reject unauthorised modification or deletion.
+
+### Per-invoice failure isolation
+
+A failure in one invoice does not terminate the remaining batch. Each document produces its own workflow result.
+
+## Validated reference results
+
+The controlled four-invoice fixture suite currently produces:
+
+| Fixture | Workflow status | Terminal route | Stages |
+|---|---|---:|---:|
+| `Template1_Instance90.jpg` | `REVIEW_REQUIRED` | `HUMAN_REVIEW` | 7 |
+| `08181_flat_document.png` | `SUCCEEDED` | `COMPLETED` | 7 |
+| `invoice_Aaron Bergman_36258.pdf` | `REVIEW_REQUIRED` | `HUMAN_REVIEW` | 7 |
+| `08181_warped_document_perspective_shadow.jpg` | `REVIEW_REQUIRED` | `HUMAN_REVIEW` | 7 |
+
+Aggregate result:
+
+- 4 invoices orchestrated.
+- 1 invoice completed automatically.
+- 3 invoices routed to human review.
+- 0 failed workflows.
+- 4 PostgreSQL memory writes.
+- 0 unhandled exceptions.
+
+These fixtures are regression controls, not a general invoice-accuracy benchmark.
+
+## Validation status
+
+The final orchestration acceptance run produced:
+
+```text
+881 passed
+0 failed
+0 errors
+0 skipped
+0 deselected
+```
+
+This included:
+
+- Real PaddleOCR execution.
+- Real PostgreSQL execution against Neon.
+- PostgreSQL migration and checksum validation.
+- Row-level security tests.
+- Append-only trigger tests.
+- Payload-integrity verification.
+- Connection-pool tenant-context tests.
+- Phase 1–8 integration tests.
+- Deterministic-ID tests.
+- Retry and recovery tests.
+- Cross-document isolation tests.
+- Per-invoice failure-isolation tests.
+- Controlled four-invoice golden-baseline tests.
+
+The bounded batch engine has also been validated with a synthetic batch of 200 documents. The default configuration permits up to 1,000 documents per batch with four concurrent invoice workflows.
+
+Real production throughput still depends on invoice complexity, OCR hardware, model latency, database capacity, and deployment configuration.
+
+## Technology stack
+
+- Python 3.11+
+- Pydantic
+- PaddleOCR
+- Tesseract OCR
+- OpenCV
+- Pillow
+- NumPy
+- PyMuPDF
+- PostgreSQL
+- Psycopg 3
+- Neon PostgreSQL
+- Pytest
+- Docker and Docker Compose
+- GitHub Actions
+
+## Repository structure
+
+```text
+accounts-payable-agent/
+├── src/ap_agent/
+│   ├── adapters/          # OCR and external-provider adapters
+│   ├── artifacts/         # Artifact filesystem and persistence helpers
+│   ├── config/            # Application and phase configuration
+│   ├── db/                # PostgreSQL migrations and role management
+│   ├── models/            # Typed contracts and result models
+│   ├── orchestration/     # Workflow engine, routing, handlers and batching
+│   ├── repositories/      # PostgreSQL repository operations
+│   ├── serialization/     # Canonical payload serialization
+│   ├── services/          # Memory and application services
+│   └── tools/             # Phase 1–6 processing tools
+├── tests/
+│   ├── fixtures/          # Controlled invoice and reference-data fixtures
+│   ├── golden/            # Expected deterministic outcomes
+│   ├── integration/       # Cross-phase and provider integration tests
+│   ├── support/           # Shared testing utilities
+│   └── unit/              # Isolated unit tests
+├── scripts/               # Migration and memory smoke-test commands
+├── notebooks/             # Original development and validation notebook
+├── docs/                  # Modularisation and acceptance reports
+├── docker/                # Container initialisation resources
+├── .github/workflows/     # Continuous-integration workflows
+├── docker-compose.yml
+├── Dockerfile
+└── pyproject.toml
+```
+
+## Getting started
+
+### Prerequisites
+
+You will need:
+
+- Python 3.11 or newer.
+- Git.
+- PostgreSQL 16 or a compatible managed PostgreSQL service.
+- Tesseract if using the fallback OCR provider.
+- Docker and Docker Compose for the containerised PostgreSQL setup.
+
+### Clone the repository
+
+```bash
+git clone https://github.com/AIanumel2025/accounts-payable-agent.git
+cd accounts-payable-agent
+```
+
+### Create a virtual environment
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+```
+
+On Windows:
+
+```powershell
+.venv\Scripts\activate
+```
+
+### Install the project
+
+Install the full development environment:
+
+```bash
+python -m pip install --upgrade pip
+pip install -e ".[dev,preprocessing,ocr-tesseract,ocr-paddle,postgres]"
+```
+
+To install only selected capabilities, use the relevant extras:
+
+```bash
+pip install -e ".[dev]"
+pip install -e ".[preprocessing]"
+pip install -e ".[ocr-tesseract]"
+pip install -e ".[ocr-paddle]"
+pip install -e ".[postgres]"
+```
+
+### Install the Tesseract binary
+
+macOS:
+
+```bash
+brew install tesseract
+```
+
+Ubuntu or Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr
+```
+
+PaddleOCR downloads its model files the first time its engine is constructed. The initial run may therefore take longer and requires access to a supported model host.
+
+## PostgreSQL setup
+
+Copy the example configuration:
+
+```bash
+cp .env.example .env
+```
+
+The main database variables are:
+
+```text
+AP_AGENT_POSTGRES_DSN
+AP_AGENT_POSTGRES_MIGRATION_DSN
+AP_AGENT_POSTGRES_RUNTIME_ROLE
+AP_AGENT_TEST_POSTGRES_DSN
+```
+
+Never commit actual database credentials.
+
+### Start local PostgreSQL
+
+```bash
+docker compose up -d postgres
+```
+
+### Apply migrations
+
+```bash
+docker compose run --rm migrate
+```
+
+Alternatively:
+
+```bash
+python scripts/migrate.py
+```
+
+### Run the memory smoke test
+
+```bash
+docker compose --profile smoke-test run --rm memory-smoke-test
+```
+
+### Stop the local database
+
+```bash
+docker compose down
+```
+
+Add `-v` only when you deliberately want to remove the local database volume:
+
+```bash
+docker compose down -v
+```
+
+## Running the tests
+
+### Fast suite
+
+Runs tests that do not require PaddleOCR model execution or a live PostgreSQL instance:
+
+```bash
+pytest -m "not requires_paddle and not requires_postgres" -q
+```
+
+### PaddleOCR acceptance suite
+
+```bash
+pytest -m requires_paddle -vv
+```
+
+### PostgreSQL acceptance suite
+
+Configure a dedicated disposable test database:
+
+```bash
+export AP_AGENT_TEST_POSTGRES_DSN="postgresql://..."
+pytest -m requires_postgres -vv
+```
+
+The PostgreSQL acceptance suite applies migrations and exercises role, RLS, transaction, and persistence behaviour. Do not point it at a production database.
+
+### Full regression suite
+
+```bash
+pytest -vv
+```
+
+## Reference data
+
+Phase 6 uses supplier, purchase-order, and goods-receipt repositories.
+
+The repository includes controlled JSON reference fixtures for testing. Production deployments should replace these fixtures with adapters for the client’s authoritative systems, such as:
+
+- ERP supplier master.
+- Procurement or purchase-order system.
+- Goods-receipt system.
+- Accounting platform.
+- Document-management system.
+- Object storage.
+- Email or invoice-ingestion service.
+
+Supplier, purchase-order, and goods-receipt values must come from authoritative client data. They should not be inferred by an LLM.
+
+## Human review
+
+Invoices are routed to human review when the system encounters conditions such as:
+
+- Missing supplier identity.
+- Missing invoice number.
+- Missing or unreadable total.
+- Unapproved or unresolved supplier.
+- Missing referenced purchase order.
+- Financial reconciliation failure.
+- Quantity or price discrepancy.
+- Missing line-item evidence.
+- Inherited review status from an earlier phase.
+- Artifact-integrity failure.
+
+The planned review interface will allow authorised users to:
+
+- View the original invoice.
+- Inspect OCR tokens and bounding boxes.
+- Compare extracted and normalised values.
+- Review financial checks.
+- Review supplier, PO, and goods-receipt matches.
+- Correct supported fields.
+- Approve, reject, or escalate an invoice.
+- Record append-only review decisions.
+- Resume an eligible workflow.
+
+## Deployment direction
+
+The recommended production-facing architecture is:
+
+- **Next.js and TypeScript** for the browser interface.
+- **FastAPI** for the application API.
+- **The existing Python package** for invoice processing and orchestration.
+- **PostgreSQL or Neon** for operational memory.
+- **Object storage** for documents and evidence images.
+- **OIDC authentication** for client identity and role management.
+- **A task queue and workers** for large asynchronous batches.
+- **OpenTelemetry-compatible logging and metrics** for observability.
+
+A low-code tool such as Base44 may be used for rapid UI demonstrations, but the Python package, PostgreSQL database, and API should remain the authoritative implementation.
+
+## Current limitations
+
+This repository is not yet a complete production SaaS application.
+
+Current limitations include:
+
+- No public FastAPI service yet.
+- No production web interface yet.
+- No enterprise authentication integration yet.
+- No ERP posting connector yet.
+- No payment-execution capability.
+- Reference repositories are controlled test fixtures.
+- Load testing has not yet established production capacity.
+- OCR accuracy has been validated only against the controlled fixture set.
+- Monitoring, alerting, and operational dashboards remain to be added.
+- Human-review actions have not yet been exposed through a user interface.
+
+The system should not be treated as autonomous financial decision-making authority without client-specific controls, evaluation, security review, and human oversight.
+
+## Roadmap
+
+Planned milestones include:
+
+1. Build the FastAPI application layer.
+2. Build the Next.js human-review interface.
+3. Add authentication and role-based access control.
+4. Add asynchronous jobs and worker queues.
+5. Integrate supplier, PO, receipt, ERP, email, and storage systems.
+6. Add client-specific configuration and tenant onboarding.
+7. Add evaluation datasets and accuracy reporting.
+8. Add monitoring, tracing, alerting, and operational dashboards.
+9. Add an LLM reasoning layer for bounded ambiguity resolution.
+10. Conduct security, performance, and user-acceptance testing.
+
+Any LLM reasoning layer will remain subordinate to deterministic financial policies. It must not fabricate financial values, suppliers, purchase orders, or approval evidence.
+
+## Documentation
+
+Detailed milestone reports are available in the `docs/` directory:
+
+- [Modularisation map](docs/modularisation_map.md)
+- [Phase 1 ingestion](docs/m3_phase_1_ingestion_report.md)
+- [Phase 2 preprocessing](docs/m4_phase_2_preprocessing_report.md)
+- [Phase 3 OCR](docs/m4_phase_3_ocr_report.md)
+- [Phase 4 normalisation](docs/m5_phase_4_normalization_report.md)
+- [Phase 5 financial validation](docs/m6_phase_5_financial_validation_report.md)
+- [Phase 6 reference matching](docs/m7_phase_6_reference_matching_report.md)
+- [Phase 7 PostgreSQL memory](docs/m8_phase_7_postgres_memory_report.md)
+- [Phase 8 orchestration](docs/m9_phase_8_orchestration_report.md)
+
+## Contributing
+
+Issues and pull requests are welcome.
+
+When contributing:
+
+1. Preserve deterministic output and identifier behaviour.
+2. Do not weaken fail-closed integrity checks.
+3. Do not infer missing financial values.
+4. Add tests for every behavioural change.
+5. Run the relevant provider and database acceptance suites.
+6. Keep credentials, generated artifacts, and model caches out of Git.
+
+## Licence
+
+This project is licensed under the [MIT License](LICENSE).
+
+## Author
+
+Created by [Tony Anumel](https://github.com/AIanumel2025).
