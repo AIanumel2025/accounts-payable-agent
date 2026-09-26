@@ -372,17 +372,24 @@ for the last one -- see §17):
    milestone did not regress any earlier milestone's real-PaddleOCR behaviour.
 8. **Full Phase 1-8 acceptance test requiring both providers**:
    `test_phase_8_full_acceptance_both_providers.py` exists (task §16, "any full
-   end-to-end test requiring both providers") and collects correctly, but
-   skipped in both runs above because `AP_AGENT_TEST_POSTGRES_DSN` is unset
-   (§17) -- it is reported here as **skipped, not passed**, per task §20's
-   explicit instruction not to describe a skipped provider test as passed.
-9. **Full regression, no unintended deselection**: `pytest -vv` (no marker
-   filter, every test in the repository): **834 passed, 19 skipped, 0 failed,
-   0 errors**, 2296.96s (38m17s). 834 passed = the 806 from step 5 plus the 28
-   from step 7 exactly; 19 skipped = exactly step 6's 19 (every
+   end-to-end test requiring both providers") and collected correctly, but
+   skipped in this sandbox run because `AP_AGENT_TEST_POSTGRES_DSN` is unset
+   (§17) -- reported here as **skipped, not passed**, per task §20's explicit
+   instruction not to describe a skipped provider test as passed. It later
+   passed for real in CI once both providers were available -- see §18.
+9. **Full regression, no unintended deselection (sandbox)**: `pytest -vv` (no
+   marker filter, every test in the repository): **834 passed, 19 skipped, 0
+   failed, 0 errors**, 2296.96s (38m17s). 834 passed = the 806 from step 5
+   plus the 28 from step 7 exactly; 19 skipped = exactly step 6's 19 (every
    `requires_postgres` test, all for the same unset-DSN reason, none for any
    other cause). No test was deselected in this run (no `-m` filter was
    applied), so there is nothing to audit for unintended deselection.
+
+**This sandbox run could not exercise a live PostgreSQL database at all
+(steps 6/8's skips), so it is superseded, not final:** §18 records a CI
+hotfix and a second, CI-only validation pass with both providers actually
+available, ending in **881 passed, 0 failed, 0 errors, 0 skipped, 0
+deselected** with no test left unexecuted for lack of a provider.
 
 ## 16. Deviations from the notebook
 
@@ -412,28 +419,118 @@ for the last one -- see §17):
 None of these change the notebook's own validated four-fixture outcome (§14
 reproduces it exactly).
 
-## 17. Blockers
+## 17. Blockers (as of the sandbox run; resolved in CI -- see §18)
 
-- **PostgreSQL**: `AP_AGENT_TEST_POSTGRES_DSN` is unset in this environment —
-  the same blocker M8's own report documents. The two new `requires_postgres`
-  M8-retrieval-audit tests (§5) and Stage 7's real-`PostgresMemoryRepository`
-  path are exercised structurally through `FakeMemoryRepository` here (which
-  reproduces the same `MemoryRepository` contract) but not against a live
-  database in this run. `.github/workflows/m8-postgres-acceptance.yml`'s branch
-  condition now includes `claude/m9-phase-8-orchestration`, so these run in
-  CI once the PR opens, using the repository's existing
-  `AP_AGENT_TEST_POSTGRES_DSN` secret.
-- **PaddleOCR**: not a blocker in this run — the sandbox in this session had
-  outbound access to download PaddleOCR's models, so both `requires_paddle`
-  suites (namespace-isolation PO-backed fixtures, §4; four-fixture acceptance,
-  §14) executed for real and are reported as passed, not skipped.
+- **PostgreSQL**: `AP_AGENT_TEST_POSTGRES_DSN` is unset in this sandbox
+  environment -- the same blocker M8's own report documents. The two new
+  `requires_postgres` M8-retrieval-audit tests (§5) and Stage 7's real-
+  `PostgresMemoryRepository` path were exercised structurally through
+  `FakeMemoryRepository` in this sandbox (which reproduces the same
+  `MemoryRepository` contract) but not against a live database in the
+  sandbox run. `.github/workflows/m8-postgres-acceptance.yml`'s branch
+  condition includes `claude/m9-phase-8-orchestration`, so these ran in CI
+  once the PR opened, using the repository's `AP_AGENT_TEST_POSTGRES_DSN`
+  secret -- confirmed green; see §18.
+- **PaddleOCR**: not a blocker in the sandbox run -- the sandbox in this
+  session had outbound access to download PaddleOCR's models, so both
+  `requires_paddle` suites (namespace-isolation PO-backed fixtures, §4;
+  four-fixture acceptance, §14) executed for real there too.
 
-## 18. Readiness recommendation
+## 18. CI hotfix and final CI-confirmed validation (post-PR)
 
-Orchestration modularisation is complete and behaviourally verified against the
-notebook's own validated four-fixture run, with one deliberate, documented,
-task-directed improvement (§11/§16.1) that does not change that outcome. The
-M8 retrieval-scoping audit found no defect requiring a production change.
-Recommend proceeding to the human-review interface and subsequent agent
-reasoning layer once the PostgreSQL-backed acceptance run (§17) is confirmed
-green in CI.
+The first CI run against the real Neon test database
+([run 36248250301](https://github.com/AIanumel2025/accounts-payable-agent/actions/runs/36248250301))
+failed: **4 passed, 1 skipped, 14 errors**, all
+`psycopg.errors.InsufficientPrivilege: permission denied to alter role ...
+Only roles with the SUPERUSER attribute may change the SUPERUSER
+attribute.`
+
+**Root cause.** `ap_agent.db.roles.create_least_privilege_role`'s
+idempotent path (for a runtime role already existing from an earlier run
+against the same persistent database) issued
+`ALTER ROLE ... WITH LOGIN PASSWORD ... NOSUPERUSER NOBYPASSRLS NOCREATEDB
+NOCREATEROLE`. PostgreSQL requires the *executing* role to itself hold
+`SUPERUSER`/`BYPASSRLS` to change either attribute on *any* role at all,
+even to reassert the role's own current (already-`NO*`) value. Neon's
+`neondb_owner` (the DSN's owner role, used to run migrations and manage
+the test runtime role) is not itself a superuser, so this statement always
+failed once the role existed from a prior run -- an M8 idempotency defect,
+not an orchestration-engine defect, exposed by M9 adding two more
+`requires_postgres` tests that (like every other RLS-sensitive test in the
+suite) depend on the `runtime_role_ready` fixture.
+
+**Fix** (`src/ap_agent/db/roles.py`, `ap_agent/exceptions.py`;
+`tests/unit/test_memory_roles.py` rewritten, 61 tests up from 20):
+`create_least_privilege_role` now reads the existing role's actual
+`rolsuper`/`rolbypassrls`/`rolcreatedb`/`rolcreaterole` flags from
+`pg_roles` before doing anything else.
+
+- Role does not exist: `CREATE ROLE` as before; the result is now read
+  back and re-verified (fails closed if creation somehow did not land
+  least-privilege).
+- Role exists and is already least-privilege: only its password and
+  `LOGIN` are refreshed -- the `ALTER ROLE` statement never re-specifies
+  `SUPERUSER`/`BYPASSRLS`/`CREATEDB`/`CREATEROLE` at all, so it never
+  triggers the permission check only a superuser can pass.
+- Role exists and is unexpectedly privileged: the new `PrivilegedRoleError`
+  is raised and the role is never altered -- there is no safe way to
+  downgrade a role without `SUPERUSER`, so this fails closed rather than
+  concealing or retrying (never auto-corrected, per the fail-closed
+  requirement).
+
+`sql.Identifier`/`sql.Literal` composition and the password-never-logged
+property are unchanged. The new unit tests cover: first execution (role
+absent), second execution (role present, least-privilege), password
+rotation on the existing-role path, an existing correctly-restricted role,
+fail-closed rejection for each of the four attributes individually and all
+four at once, post-`CREATE` verification, SQL-injection-shaped role names
+and passwords (using psycopg's own trusted `sql.Literal` quoting as the
+test oracle rather than a naive semicolon count, which false-positives on
+a safely quoted literal that legitimately contains semicolon characters),
+and no credential leakage including from `PrivilegedRoleError`'s own
+message/details.
+
+The workflow was also extended to install the project's pinned PaddleOCR
+dependencies (`paddlepaddle==3.3.1`, `paddleocr==3.7.0`, the existing
+`ocr-paddle` extra) and the `tesseract-ocr` system binary, with a keyed
+`actions/cache` step for PaddleOCR/PaddleX's downloaded model weights and
+a 90-minute job timeout, so both the combined-provider test and a full
+unfiltered regression could run for real in CI instead of the
+`requires_postgres`-only, `FakeMemoryRepository`-backed check the sandbox
+was limited to.
+
+**Confirmed CI results, independently verified from the Actions API and
+job logs (not solely relayed) across two runs against the same, unmodified
+persistent Neon test database:**
+
+| Run | Commit | Step | Result |
+|---|---|---|---|
+| [36249880424](https://github.com/AIanumel2025/accounts-payable-agent/actions/runs/36249880424) | `7fff643` | `pytest -m requires_postgres -vv` | **19 passed**, 862 deselected, 0 failed, 0 errors, 0 skipped, 637.91s |
+| [36258052419](https://github.com/AIanumel2025/accounts-payable-agent/actions/runs/36258052419) | `0a1f9ae` | `pytest -m requires_postgres -vv` | success (targeted re-check before the full run) |
+| [36258052419](https://github.com/AIanumel2025/accounts-payable-agent/actions/runs/36258052419) | `0a1f9ae` | `pytest -vv` (full, unfiltered) | **881 passed**, 0 failed, 0 errors, 0 skipped, 0 deselected, 3342.86s (55m42s) |
+
+The role-idempotency fix held on both CI runs: run 36249880424 exercised
+the ALTER path against the role run 36248250301 had left in existence, and
+run 36258052419 exercised it again (the workflow now invokes pytest twice
+per run) -- three consecutive successful passes through
+`create_least_privilege_role`'s existing-role branch against the one
+shared, persistent database, with no role deletion or superuser escalation
+involved. `test_phase_8_full_acceptance_both_providers.py` (`requires_postgres`
+*and* `requires_paddle`) passed for real in both runs: real PaddleOCR
+engine, real PostgreSQL, no mocks, no forced Tesseract fallback. The
+881-passed full-regression figure includes every fast-suite test, every
+`requires_paddle` test, and every `requires_postgres` test in one
+unfiltered invocation -- nothing is skipped, deselected, or unexecuted.
+
+## 19. Readiness recommendation
+
+Orchestration modularisation is complete and behaviourally verified against
+the notebook's own validated four-fixture run, with one deliberate,
+documented, task-directed improvement (§11/§16.1) that does not change that
+outcome, plus the M9 CI hotfix in §18 (an M8 idempotency defect, not an
+orchestration defect). The M8 retrieval-scoping audit found no defect
+requiring a production change. The PostgreSQL-backed acceptance run is now
+confirmed green in CI (§18), including the combined real-PaddleOCR +
+real-PostgreSQL acceptance test and a full, unfiltered regression with
+nothing skipped, deselected, or failed. Recommend proceeding to the
+human-review interface and subsequent agent reasoning layer.
