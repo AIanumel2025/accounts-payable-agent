@@ -104,7 +104,7 @@ re-raising a bare `RuntimeError` (whose message joins the phase's `errors` with
 `" | "`) — which, fed back through Cell 2's `classify_orchestration_failure`,
 resolves to `OrchestrationFailureClass.UNKNOWN` with the phase's individual
 `errors`/`review_reasons` collapsed into one synthesized string. Task §12
-requires better than that; see §12.
+requires better than that; see §11 below.
 
 Confirmed no production orchestration module contains `globals()` mutation
 (`tests/integration/test_orchestration_namespace_isolation
@@ -377,8 +377,12 @@ for the last one -- see §17):
    (§17) -- it is reported here as **skipped, not passed**, per task §20's
    explicit instruction not to describe a skipped provider test as passed.
 9. **Full regression, no unintended deselection**: `pytest -vv` (no marker
-   filter) -- see §17 for this run's result and whether it completed in this
-   session.
+   filter, every test in the repository): **834 passed, 19 skipped, 0 failed,
+   0 errors**, 2296.96s (38m17s). 834 passed = the 806 from step 5 plus the 28
+   from step 7 exactly; 19 skipped = exactly step 6's 19 (every
+   `requires_postgres` test, all for the same unset-DSN reason, none for any
+   other cause). No test was deselected in this run (no `-m` filter was
+   applied), so there is nothing to audit for unintended deselection.
 
 ## 16. Deviations from the notebook
 
@@ -428,7 +432,7 @@ reproduces it exactly).
 
 Orchestration modularisation is complete and behaviourally verified against the
 notebook's own validated four-fixture run, with one deliberate, documented,
-task-directed improvement (§11/§15.1) that does not change that outcome. The
+task-directed improvement (§11/§16.1) that does not change that outcome. The
 M8 retrieval-scoping audit found no defect requiring a production change.
 Recommend proceeding to the human-review interface and subsequent agent
 reasoning layer once the PostgreSQL-backed acceptance run (§17) is confirmed
