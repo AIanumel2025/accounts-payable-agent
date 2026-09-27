@@ -45,7 +45,20 @@ even to reassert their current value (`ALTER ROLE ... NOSUPERUSER` fails
 with `psycopg.errors.InsufficientPrivilege` unless the caller is itself a
 superuser), so silently retrying or downgrading the role is not an option;
 this fails closed instead.
-"""
+
+`ReviewCaseNotFoundError`, `TenantAccessDeniedError`,
+`ReviewAuthenticationError`, `ReviewCommandRejectedError` and
+`ReviewIntegrityError` are new in M10, for the Phase 9 human-review
+interface (`ap_agent.repositories.review_repository`,
+`ap_agent.services.review_queries`/`review_commands`/`review_decisions`/
+`workflow_resume`, `ap_agent.api`). The notebook's Phase 9 cells raised a
+bare `HTTPException`/`RuntimeError`/`ValueError` for every one of these
+cases (unknown review case, cross-tenant access, malformed authentication,
+a rejected/conflicting command, a payload-integrity or cross-tenant-leakage
+failure detected server-side); this module upgrades them to structured,
+typed exceptions so `ap_agent.api.errors` can map each one to the exact
+HTTP status the M10 task brief §12 requires, without leaking SQL, stack
+traces or DSNs into the response (task §9/§13/§21)."""
 
 from typing import Any
 
@@ -61,6 +74,11 @@ __all__ = [
     "TenantContextError",
     "MemoryIntegrityError",
     "PrivilegedRoleError",
+    "ReviewCaseNotFoundError",
+    "TenantAccessDeniedError",
+    "ReviewAuthenticationError",
+    "ReviewCommandRejectedError",
+    "ReviewIntegrityError",
 ]
 
 
@@ -196,6 +214,81 @@ class MemoryIntegrityError(Exception):
     results). Mirrors the notebook's bare `RuntimeError`s in
     `persist_invoice_memory_records` / `retrieve_matched_invoice_memory`
     (cell 88) with a structured, fail-closed exception."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class ReviewCaseNotFoundError(Exception):
+    """Raised when a review case, or the workflow/invoice memory it must
+    join against, cannot be found for the given tenant. Maps to HTTP 404
+    (task §12). Never distinguishes "does not exist" from "exists under
+    another tenant" in its message -- the tenant-scoped query itself
+    (row-level security plus an explicit `tenant_id` predicate) already
+    makes those indistinguishable, which is the desired fail-closed
+    behaviour (task §5: "no cross-tenant reads")."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class TenantAccessDeniedError(Exception):
+    """Raised when an authenticated actor's tenant does not match the
+    tenant the request targets. Maps to HTTP 403 (task §12, notebook cell
+    108's `authenticated_interface_actor`/`TENANT_ACCESS_DENIED`)."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class ReviewAuthenticationError(Exception):
+    """Raised when the prototype header-authentication adapter
+    (`ap_agent.api.dependencies`) cannot authenticate a request: a missing
+    header, a malformed tenant/actor UUID, or an invalid/expired
+    authentication timestamp. Maps to HTTP 401 (task §10/§12, notebook cell
+    108's `authenticated_interface_actor`/`parse_authenticated_at`)."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
+
+
+class ReviewCommandRejectedError(Exception):
+    """Raised when `ap_agent.services.review_commands.validate_review_command`
+    (or the resume-specific `ap_agent.services.workflow_resume
+    .validate_resume_command`) rejects a `ReviewCommand`, or when a
+    transactional executor returns a non-accepted, non-idempotent
+    `ReviewCommandResult`/`WorkflowResumeExecution`. Carries the same
+    fail-closed error-code tuple the notebook's `validate_review_command`
+    returns (cells 104/107); `ap_agent.api.errors` maps those codes to
+    403/409/422 exactly as the notebook's own `command_http_error`
+    (cell 108) does."""
+
+    def __init__(self, errors: tuple[str, ...], message: str = "Review command rejected."):
+        super().__init__(message)
+        self.errors = errors
+        self.message = message
+
+
+class ReviewIntegrityError(Exception):
+    """Raised when the Phase 9 review repository or services detect
+    content that cannot be trusted: a cross-tenant row returned by a query
+    that should have been tenant-scoped, a stored-vs-recomputed
+    payload-hash mismatch, a malformed stored JSONB payload, or a
+    cross-table consistency failure (review reasons/workflow status
+    disagreeing between `ap_agent.review_cases` and
+    `ap_agent.invoice_memory_records`). Mirrors the notebook's bare
+    `RuntimeError`s in `retrieve_review_queue`/`retrieve_invoice_detail`/
+    `retrieve_dashboard_record` (cells 101-103) with a structured,
+    fail-closed exception; `ap_agent.api.errors` maps it to a redacted HTTP
+    500 (task §12/§21: never leak SQL or payload contents to the client)."""
 
     def __init__(self, reason: str, details: dict[str, Any] | None = None):
         super().__init__(reason)

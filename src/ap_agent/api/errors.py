@@ -1,0 +1,147 @@
+"""Central exception-to-HTTP mapping for the Phase 9 review API.
+
+Source: notebook cell 108's inline `HTTPException` raises and its
+`command_http_error` helper, generalized into FastAPI exception handlers
+(task §12: "Use central exception handlers. Do not leak implementation
+details."). Every handler returns the same deterministic error envelope
+shape (task §9/§13) and never includes a stack trace, SQL text, a DSN, a
+local filesystem path or any other implementation detail (task §21).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+from uuid import uuid4
+
+from fastapi import Request, status
+from fastapi.responses import JSONResponse
+
+from ap_agent.exceptions import (
+    PostgresConfigurationError,
+    ReviewAuthenticationError,
+    ReviewCaseNotFoundError,
+    ReviewCommandRejectedError,
+    ReviewIntegrityError,
+    TenantAccessDeniedError,
+    TenantContextError,
+)
+from ap_agent.models.interface import interface_utc_now
+
+__all__ = ["command_http_error", "register_exception_handlers"]
+
+
+_LOGGER = logging.getLogger("ap_agent.api")
+
+
+def command_http_error(errors: tuple[str, ...]) -> int:
+    """`command_http_error` (notebook cell 108, verbatim mapping)."""
+
+    if "ACTION_NOT_PERMITTED" in errors:
+        return status.HTTP_403_FORBIDDEN
+
+    if "CROSS_TENANT_COMMAND" in errors:
+        return status.HTTP_403_FORBIDDEN
+
+    if any(
+        error in {"STALE_REVIEW_REVISION", "STALE_WORKFLOW_REVISION", "IDEMPOTENCY_KEY_CONTENT_CONFLICT"}
+        for error in errors
+    ):
+        return status.HTTP_409_CONFLICT
+
+    if any(
+        error
+        in {
+            "CASE_ASSIGNED_TO_DIFFERENT_REVIEWER",
+            "DECISION_ACTOR_MISMATCH",
+        }
+        for error in errors
+    ):
+        return status.HTTP_409_CONFLICT
+
+    return status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def _error_envelope(request_id: str, errors: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "request_id": request_id,
+        "errors": list(errors),
+        "generated_at": interface_utc_now().isoformat(),
+    }
+
+
+def register_exception_handlers(app) -> None:  # `app: FastAPI`, untyped to avoid an import cycle at module load
+    @app.exception_handler(ReviewCaseNotFoundError)
+    async def _handle_not_found(request: Request, exc: ReviewCaseNotFoundError) -> JSONResponse:
+        request_id = str(uuid4())
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=_error_envelope(request_id, exc.details.get("errors", ("REVIEW_CASE_NOT_FOUND",))),
+        )
+
+    @app.exception_handler(TenantAccessDeniedError)
+    async def _handle_tenant_denied(request: Request, exc: TenantAccessDeniedError) -> JSONResponse:
+        request_id = str(uuid4())
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content=_error_envelope(request_id, exc.details.get("errors", ("TENANT_ACCESS_DENIED",))),
+        )
+
+    @app.exception_handler(ReviewAuthenticationError)
+    async def _handle_authentication_error(request: Request, exc: ReviewAuthenticationError) -> JSONResponse:
+        request_id = str(uuid4())
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content=_error_envelope(request_id, exc.details.get("errors", ("AUTHENTICATION_FAILED",))),
+        )
+
+    @app.exception_handler(ReviewCommandRejectedError)
+    async def _handle_command_rejected(request: Request, exc: ReviewCommandRejectedError) -> JSONResponse:
+        request_id = str(uuid4())
+        return JSONResponse(
+            status_code=command_http_error(exc.errors),
+            content=_error_envelope(request_id, exc.errors),
+        )
+
+    @app.exception_handler(ReviewIntegrityError)
+    async def _handle_integrity_error(request: Request, exc: ReviewIntegrityError) -> JSONResponse:
+        request_id = str(uuid4())
+        # Never echo `exc.reason`/`exc.details` to the client (task §12/
+        # §21: no implementation detail, SQL or payload content in a
+        # response) -- only server-side logging gets the real reason.
+        _LOGGER.error("Review-integrity failure (request_id=%s): %s", request_id, exc.reason)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=_error_envelope(request_id, ("INTERNAL_ERROR",)),
+        )
+
+    @app.exception_handler(PostgresConfigurationError)
+    @app.exception_handler(TenantContextError)
+    async def _handle_database_unavailable(request: Request, exc: Exception) -> JSONResponse:
+        request_id = str(uuid4())
+        _LOGGER.error("Database dependency unavailable (request_id=%s): %s", request_id, type(exc).__name__)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=_error_envelope(request_id, ("DATABASE_UNAVAILABLE",)),
+        )
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        request_id = str(uuid4())
+        _LOGGER.exception("Unhandled error (request_id=%s)", request_id)
+
+        try:
+            import psycopg
+
+            if isinstance(exc, psycopg.Error):
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content=_error_envelope(request_id, ("DATABASE_UNAVAILABLE",)),
+                )
+        except ImportError:  # pragma: no cover - psycopg always installed for this app
+            pass
+
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=_error_envelope(request_id, ("INTERNAL_ERROR",)),
+        )

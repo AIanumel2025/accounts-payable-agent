@@ -1,10 +1,12 @@
-name: M8 PostgreSQL acceptance
+name: M8/M9/M10 PostgreSQL acceptance
 
 # This job needs native PostgreSQL TCP connectivity to a Neon test
-# database, which the Claude Code cloud sandbox cannot make. It is run
-# here instead, never from the sandbox. See
+# database, which the Claude Code cloud sandbox cannot make (its egress
+# proxy explicitly does not support raw-TCP databases). It is run here
+# instead, never from the sandbox. See
 # docs/m8_phase_7_postgres_memory_report.md §27-29 for the sandbox-side
-# diagnosis this workflow replaces.
+# diagnosis this workflow replaces, and
+# docs/m10_phase_9_review_api_report.md for the identical M10 limitation.
 #
 # M9 (task brief §16/§20 step 8) extended this job to also install the
 # real PaddleOCR engine, so the one test marked both `requires_postgres`
@@ -15,6 +17,14 @@ name: M8 PostgreSQL acceptance
 # selection is not exclusive: a test carrying both markers matches either
 # `-m` filter), so no change to the run command was needed, only to what
 # this job installs.
+#
+# M10 (task brief §18) extends this job again for the Phase 9 human-review
+# API: the `api` extra (FastAPI/Uvicorn/HTTPX) is installed, and
+# `tests/api/`/`tests/integration/test_review_postgres_integration.py`
+# (both `requires_postgres`) run here for the same reason M8/M9's own
+# `requires_postgres` suites do. No prior M8/M9 protection is removed --
+# the `if:` condition below only gains one more `head_ref` branch, and
+# every existing step is unchanged except for the widened install extras.
 
 on:
   pull_request:
@@ -39,16 +49,20 @@ jobs:
   postgres-acceptance:
     # pull_request's `branches` filter matches the PR's base branch, not
     # its head branch, so the head branch is checked here instead — this
-    # job must run only for the M8/M9 PostgreSQL-memory branches' own PRs,
-    # never for an unrelated PR. M9 (orchestration) added its own
+    # job must run only for the M8/M9/M10 PostgreSQL-dependent branches'
+    # own PRs, never for an unrelated PR. M9 (orchestration) added its own
     # requires_postgres tests to tests/integration/test_memory_postgres_integration.py
     # (the M8 retrieval-hardening audit, task brief §5/§15) rather than a
     # new file, so its branch is added here rather than duplicating this
-    # workflow.
+    # workflow. M10's harness-designated development branch is
+    # `claude/sharp-brahmagupta-ec6k5e` (not `claude/m10-phase-9-review-api`
+    # as its own task brief names -- see docs/m10_phase_9_review_api_report.md
+    # "Deviations" for why), so that is the branch listed here.
     if: >-
       github.event_name != 'pull_request' ||
       github.head_ref == 'claude/m8-phase-7-postgres-memory' ||
-      github.head_ref == 'claude/m9-phase-8-orchestration'
+      github.head_ref == 'claude/m9-phase-8-orchestration' ||
+      github.head_ref == 'claude/sharp-brahmagupta-ec6k5e'
     runs-on: ubuntu-latest
     # Generous headroom for a cold run: paddlepaddle's wheel alone is
     # several hundred MB, and PP-OCRv6's detection/recognition/orientation/
@@ -104,16 +118,18 @@ jobs:
       # the requires_postgres suite, preprocessing/ocr-tesseract
       # (numpy, opencv-python-headless, Pillow, pymupdf, pytesseract) so
       # the rest of tests/ collects cleanly under testpaths=["tests"]
-      # without spurious collection errors, and the project's pinned
+      # without spurious collection errors, the project's pinned
       # PaddleOCR dependencies (paddlepaddle==3.3.1, paddleocr==3.7.0 --
       # ap_agent's own [ocr-paddle] extra in pyproject.toml) so
       # tests/integration/test_phase_8_full_acceptance_both_providers.py
       # (requires_postgres AND requires_paddle) can run for real: no mock
-      # engine, no forced Tesseract fallback.
-      - name: Install project, test, PostgreSQL and PaddleOCR dependencies
+      # engine, no forced Tesseract fallback, and (new in M10) api
+      # (fastapi, uvicorn, httpx) so tests/api/ and every
+      # ap_agent.api/services.review_* module collect and run for real.
+      - name: Install project, test, PostgreSQL, API and PaddleOCR dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,postgres,preprocessing,ocr-tesseract,ocr-paddle]"
+          pip install -e ".[dev,postgres,api,preprocessing,ocr-tesseract,ocr-paddle]"
 
       # The `ocr-tesseract` extra above is only the `pytesseract` Python
       # binding; the fast/full suite's Tesseract-fallback pipeline tests
@@ -126,6 +142,42 @@ jobs:
       - name: Install Tesseract OCR system binary
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
 
+      # M10 task brief §20: reported separately from the broader
+      # `requires_postgres` step below so the M10 report can quote an
+      # exact, unambiguous pass/fail/skip count for "Phase 9 unit tests"
+      # on its own (these need no PostgreSQL connection at all).
+      - name: Run Phase 9 (M10) unit tests
+        run: >-
+          pytest
+          tests/unit/test_interface_models.py
+          tests/unit/test_review_commands_policy.py
+          tests/unit/test_workflow_resume_policy.py
+          tests/unit/test_review_decisions.py
+          tests/unit/test_review_repository_mapping.py
+          tests/unit/test_api_schemas.py
+          tests/unit/test_api_config.py
+          tests/unit/test_api_errors.py
+          tests/unit/test_api_dependencies.py
+          tests/unit/test_api_no_eager_imports.py
+          -vv
+
+      # M10 task brief §16/§20: every Phase 9 API test (FastAPI
+      # `TestClient` plus the real local Uvicorn process test), reported
+      # as its own step. `tests/api/test_review_api_auth.py` needs no
+      # database; the rest are `requires_postgres` and use this step's DSN.
+      - name: Run Phase 9 (M10) API tests
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+        run: pytest tests/api -vv
+
+      # M10 task brief §17/§20: the repository/service-level real-PostgreSQL
+      # suite (migrations already applied by the step above; this includes
+      # the required two-reviewer concurrent-claim test).
+      - name: Run Phase 9 (M10) real-PostgreSQL repository/service tests
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+        run: pytest tests/integration/test_review_postgres_integration.py -vv
+
       - name: Run PostgreSQL acceptance suite
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
@@ -135,7 +187,10 @@ jobs:
       # providers now available in this job, run the complete, unfiltered
       # suite (no `-m` filter) so nothing required is left skipped,
       # deselected, or unexecuted. Uses the same DSN and the same
-      # already-installed PaddleOCR engine as the step above.
+      # already-installed PaddleOCR engine as the step above. M10 adds no
+      # new `-m` filter here on purpose (task §20 step 6: "Full unfiltered
+      # regression suite") -- this one run already re-exercises every M8,
+      # M9 and M10 test, `requires_postgres` and otherwise.
       - name: Run full unfiltered regression suite
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
