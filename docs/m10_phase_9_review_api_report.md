@@ -347,18 +347,17 @@ existing suite plus this milestone's new `tests/api/test_review_api_postgres.py`
 
 ### 13.2 Real PostgreSQL (via CI — task §18/§20)
 
-**Not executed in this sandbox.** This environment's outbound-HTTPS proxy
+**Not executable in this sandbox.** This environment's outbound-HTTPS proxy
 explicitly does not support raw-TCP database connections (`/root/.ccr/README.md`:
 "Not supported through the proxy ... raw-TCP databases"); a direct connection
 attempt to the configured Neon endpoint timed out, matching the identical,
-already-documented M8/M9 limitation. Per this milestone's own instructions:
-the acceptance result is **not mocked**; the branch is pushed and the real
-`requires_postgres` result is obtained through the
-`M8/M9/M10 PostgreSQL acceptance` GitHub Actions workflow (§18), which this
-milestone extends rather than replaces. **M10 is not safe to merge until that
-workflow run is green** (§20/§25 below) — this report will be updated with the
-real run's counts once that workflow completes, and is not to be read as a
-claim that those tests currently pass.
+already-documented M8/M9 limitation. Per this milestone's own instructions,
+the acceptance result was **not mocked**: the branch was pushed and the real
+`requires_postgres` result obtained through the
+`M8/M9/M10 PostgreSQL acceptance` GitHub Actions workflow, which this
+milestone extends rather than replaces. **The real result is now in and is
+green — see §13.3-§13.5 for the two rounds of genuine failures CI caught and
+fixed, and §13.5 for the final passing run's exact counts.**
 
 Every `requires_postgres` test written for M10 was collection-verified
 (`pytest --collect-only`, 17 + 8 = 25 additional tests total across
@@ -448,6 +447,27 @@ the request it authenticates, so this also better reflects reality, and it
 removes the race for every test in this file that shares the pattern, not
 just the one CI happened to catch it on.
 
+### 13.5 CI round 3: green (run 36334399478, job 108662361660)
+
+Completed 16:45:20-17:37:15 UTC, `conclusion: success`. Exact counts per step:
+
+| Step | Result |
+|---|---:|
+| Run Phase 9 (M10) unit tests | **115 passed**, 0 failed |
+| Run Phase 9 (M10) API tests (`tests/api -vv`) | **26 passed**, 0 failed (108.24s) |
+| Run Phase 9 (M10) real-PostgreSQL repository/service tests (incl. the required concurrent-claim test) | **17 passed**, 0 failed (128.07s) |
+| Run PostgreSQL acceptance suite (`-m requires_postgres`, M8+M9+M10 combined) | **51 passed**, 988 deselected, 0 failed (669.05s / 11m9s) |
+| Run full unfiltered regression suite (`pytest -vv`, no filter — every M2-M10 test, including real PaddleOCR) | **1039 passed**, 0 failed, 0 skipped, 0 deselected (2104.27s / 35m4s) |
+
+Every `requires_postgres` test this milestone added — including
+`test_concurrent_claim_exactly_one_wins` (two real reviewers, one connection
+each, racing a genuine `CLAIM` against the same open case) — passed against
+the real, isolated `ap_agent_m8_test` database. The full unfiltered run
+confirms zero regressions anywhere in the M2-M9 suite. §13.1's local-sandbox
+numbers above remain accurate for *this session's own sandbox* (which still
+cannot reach PostgreSQL directly) but are superseded, for the real
+`requires_postgres` verdict, by this section.
+
 ## 14. Security verification (task §21)
 
 - No DSN, password, or Neon hostname committed in this milestone's diff
@@ -533,28 +553,33 @@ create a new one):
 
 ## 17. Blockers
 
-- **Real PostgreSQL execution** could not run in this sandbox (§13.2) — the
-  only blocker to a final merge-readiness verdict. Once the branch is pushed,
-  the extended GitHub Actions workflow must be watched to green before this
-  milestone can be called complete; any failure it surfaces must be diagnosed
-  and fixed here, not worked around.
+None remaining. **Real PostgreSQL execution** could not run in this
+sandbox (§13.1) — the only blocker identified during development — but it
+was resolved the intended way (§13.3-§13.5): the branch was pushed, GitHub
+Actions ran the real `requires_postgres` suite three times as fixes landed,
+and the third run is green with zero failures (§13.5). Two rounds of real
+defects it surfaced (§13.3/§13.4 — one production bug, three test bugs) were
+diagnosed and fixed here, not worked around or mocked.
 
 ## 18. Merge readiness
 
-**Not yet safe to merge.** Every requirement this session could verify
-directly (extraction fidelity, module architecture, unit tests, DB-independent
-API tests, security scan, dependency pinning, CI wiring) is complete and
-green. The one requirement this session could not verify directly — the real
-`requires_postgres` suite, including the concurrent-claim test — depends on
-the GitHub Actions run this branch's push will trigger. M10 becomes safe to
-merge only once that run is green, per this milestone's own instruction not
-to mock that result.
+**Safe to merge**, pending only the repository owner's/reviewers' own
+approval. Every requirement is complete and verified: extraction fidelity,
+module architecture, unit tests (115 passed), API tests including the real
+local Uvicorn process (26 passed), the real-PostgreSQL repository/service
+suite including the required concurrent two-reviewer claim test (17 passed),
+the combined M8+M9+M10 `requires_postgres` suite (51 passed), and the full
+unfiltered regression across the entire M2-M10 codebase (**1039 passed, 0
+failed, 0 skipped, 0 deselected**) — all against the real, isolated
+`ap_agent_m8_test` database via GitHub Actions run 36334399478 (§13.5). No
+open review threads. `mergeable_state: clean` (no merge conflict with
+`main`). The PR is left open and unmerged per this milestone's instructions.
 
 ## 19. Ready for the visual UI milestone?
 
-The read side (dashboard/queue/detail projections, pagination, OpenAPI schema)
-is ready to build a UI against today. The write side (claim/release/
-correction/decision/resume) is implemented and unit/API-tested but its real
-transactional behaviour under concurrency is only confirmed once the CI run
-in §13.2 is green — a UI milestone that only reads should proceed now; one
-that lets a user submit commands should wait for that green run.
+**Yes**, for both the read and write sides. The read side (dashboard/queue/
+detail projections, pagination, OpenAPI schema) and the write side (claim/
+release/correction/decision/resume, including real concurrent-claim
+behaviour) are both implemented, unit/API-tested, and now confirmed against
+a real PostgreSQL database in CI (§13.5). A visual UI milestone can build
+against this API for both reading and submitting commands.
