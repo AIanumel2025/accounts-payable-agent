@@ -53,6 +53,20 @@ postgres = [
     "psycopg[binary]>=3.2,<4",
     "psycopg_pool>=3.2,<4",
 ]
+api = [
+    # Phase 9 human-review interface (M10). Version ranges match the
+    # notebook's own Phase 9 Cell 9 install ("fastapi>=0.115,<1.0",
+    # "uvicorn>=0.34,<1.0", "httpx>=0.28,<1.0"); the exact versions
+    # resolved and verified during M10 are recorded in
+    # docs/m10_phase_9_review_api_report.md. `httpx` is needed only by
+    # `fastapi.testclient.TestClient`/tests, never imported by
+    # `ap_agent.api` itself. Pydantic already ships as a core dependency
+    # above; FastAPI pulls in the matching pydantic-core/typing-extensions
+    # versions it needs on its own.
+    "fastapi>=0.115,<1.0",
+    "uvicorn>=0.34,<1.0",
+    "httpx>=0.28,<1.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -405,17 +405,73 @@ Invoices are routed to human review when the system encounters conditions such a
 - Inherited review status from an earlier phase.
 - Artifact-integrity failure.
 
-The planned review interface will allow authorised users to:
+The Phase 9 review API (M10) lets an authorised user:
 
-- View the original invoice.
-- Inspect OCR tokens and bounding boxes.
-- Compare extracted and normalised values.
-- Review financial checks.
-- Review supplier, PO, and goods-receipt matches.
-- Correct supported fields.
-- Approve, reject, or escalate an invoice.
-- Record append-only review decisions.
-- Resume an eligible workflow.
+- View the review queue and per-invoice detail (normalised fields, evidence
+  references, financial checks, supplier/PO/goods-receipt matches, audit
+  timeline, prior decisions).
+- Claim and release a review case.
+- Submit an evidence-backed correction to a supported field.
+- Accept, reject, or record a review decision (append-only).
+- Request a controlled workflow-resume handoff for a resolved case.
+
+A visual front end and payment/ERP-posting integration are out of scope for
+this milestone (see "Current limitations").
+
+## Review API (M10)
+
+Install the API dependencies:
+
+```bash
+pip install -e ".[api,postgres]"
+```
+
+Set the PostgreSQL DSN the API should use (its production runtime DSN, read
+only when `create_app()` is called with no arguments — never at import time):
+
+```bash
+export AP_AGENT_POSTGRES_DSN="postgresql://..."
+```
+
+Launch it locally:
+
+```bash
+uvicorn ap_agent.api.app:create_app --factory --host 127.0.0.1 --port 8000
+```
+
+Then open `http://127.0.0.1:8000/docs` (Swagger UI) or `/redoc`.
+
+Every request must carry four development/test authentication headers —
+**not** production authentication; see `ap_agent/api/dependencies.py` for what
+production requires instead:
+
+```text
+X-Tenant-ID: <uuid>
+X-Actor-ID: <string>
+X-Actor-Role: AP_OPERATOR | AP_REVIEWER | TENANT_ADMIN | READ_ONLY_AUDITOR
+X-Authenticated-At: <ISO-8601 timestamp>
+```
+
+### Validation-only vs. write-enabled mode
+
+By default (`AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES` unset or `false`), `POST
+.../commands` validates a command and returns `"status": "VALIDATED"` without
+touching the database. Set it to `true` only where you intend commands to
+execute for real:
+
+```bash
+export AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES=true
+```
+
+### Running the API tests
+
+```bash
+pytest tests/api -vv                                    # TestClient + real Uvicorn
+pytest tests/integration/test_review_postgres_integration.py -vv   # repository/service, real PostgreSQL
+```
+
+The PostgreSQL-backed tests need the same `AP_AGENT_TEST_POSTGRES_DSN` as the
+rest of the PostgreSQL acceptance suite above — never a production DSN.
 
 ## Deployment direction
 
@@ -438,16 +494,19 @@ This repository is not yet a complete production SaaS application.
 
 Current limitations include:
 
-- No public FastAPI service yet.
-- No production web interface yet.
-- No enterprise authentication integration yet.
+- A FastAPI review API exists (M10), but only its prototype development/test
+  header authentication — no enterprise identity-provider integration yet.
+- No production visual web interface yet (the API is ready for one; see
+  "Review API (M10)").
 - No ERP posting connector yet.
-- No payment-execution capability.
+- No payment-execution capability (and no command can produce one — see
+  "Safety and reliability principles").
 - Reference repositories are controlled test fixtures.
 - Load testing has not yet established production capacity.
 - OCR accuracy has been validated only against the controlled fixture set.
 - Monitoring, alerting, and operational dashboards remain to be added.
-- Human-review actions have not yet been exposed through a user interface.
+- Workflow resumption creates a controlled handoff only; nothing yet consumes
+  it to actually resume the Phase 1-8 pipeline outside a request.
 
 The system should not be treated as autonomous financial decision-making authority without client-specific controls, evaluation, security review, and human oversight.
 
@@ -455,10 +514,12 @@ The system should not be treated as autonomous financial decision-making authori
 
 Planned milestones include:
 
-1. Build the FastAPI application layer.
+1. ~~Build the FastAPI application layer.~~ Done (M10) — see "Review API (M10)".
 2. Build the Next.js human-review interface.
-3. Add authentication and role-based access control.
-4. Add asynchronous jobs and worker queues.
+3. Replace the prototype header authentication with a real identity provider
+   (OIDC/JWT) and full role-based access control.
+4. Add asynchronous jobs and worker queues (including consuming a Phase 9
+   workflow-resume handoff to actually resume the Phase 1-8 pipeline).
 5. Integrate supplier, PO, receipt, ERP, email, and storage systems.
 6. Add client-specific configuration and tenant onboarding.
 7. Add evaluation datasets and accuracy reporting.
@@ -481,6 +542,7 @@ Detailed milestone reports are available in the `docs/` directory:
 - [Phase 6 reference matching](docs/m7_phase_6_reference_matching_report.md)
 - [Phase 7 PostgreSQL memory](docs/m8_phase_7_postgres_memory_report.md)
 - [Phase 8 orchestration](docs/m9_phase_8_orchestration_report.md)
+- [Phase 9 human-review API](docs/m10_phase_9_review_api_report.md)
 
 ## Contributing
 
