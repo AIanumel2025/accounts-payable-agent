@@ -369,6 +369,58 @@ column-order/parameter-count correctness; two real bugs were caught this way
 before commit (§11 items 8 and 9) precisely because this review could not
 rely on a live run to surface them.
 
+### 13.3 CI round 1 result and fix (2026-09-27, run 36333543770)
+
+The workflow ran within ~2 minutes of the push. `postgres-acceptance` reported
+`failure`. Its "Run Phase 9 (M10) API tests" step: **23 passed, 2 failed**
+(every other step, including the unit-test step, passed). Both failures were
+genuine defects in this milestone's own new code, both in
+`ap_agent/api/routes/review_commands.py`, and both are now fixed (pushed as a
+follow-up commit) and re-verified locally against a hand-built scenario that
+reproduces the same sequence:
+
+1. **Premature validation broke idempotent retries in write-enabled mode.**
+   `submit_review_command` called `validate_review_command` against a freshly
+   re-read (unlocked) context *before* checking whether the command was an
+   idempotent retry of an already-accepted command. After a first `CLAIM`
+   succeeds, that context has already moved on (case now `IN_REVIEW`,
+   `workflow_revision` incremented); re-validating an identical retry against
+   the *new* state reports `STALE_WORKFLOW_REVISION`/`CASE_NOT_OPEN` and
+   rejects it with `409` before the executor's own idempotency check (which
+   runs inside a locked transaction and *does* handle this correctly) ever
+   gets a chance to run. **Fix:** the route now skips this pre-check entirely
+   in write-enabled mode and lets each executor's idempotency-then-validate
+   order (already correct, and already exercised by
+   `tests/integration/test_review_postgres_integration.py::test_idempotent_retry_returns_the_same_result`)
+   own the whole decision. Validation-only mode is unaffected (nothing is
+   persisted there, so there is no idempotent-retry case to get wrong).
+2. **A test bug, not caught locally, that the CI run's real database
+   surfaced:** `test_write_enabled_claim_then_release_round_trip`'s "retry"
+   built a *new* request body (a fresh `command_id`) rather than resending
+   the identical one — which `review_command_fingerprint` (ported verbatim
+   from cell 104) legitimately treats as different content under the same
+   idempotency key, i.e. a real conflict, not a retry. Fixed by reusing the
+   same request body object for both calls, with an added code comment
+   explaining why. A second test,
+   `test_correction_without_evidence_is_rejected`, asserted `422` while
+   submitting a correction against a **never-claimed** case as a
+   non-claiming reviewer, which also legitimately reports
+   `CASE_NOT_CLAIMED`/`CASE_ASSIGNED_TO_DIFFERENT_REVIEWER` alongside
+   `CORRECTION_EVIDENCE_REQUIRED` — and `CASE_ASSIGNED_TO_DIFFERENT_REVIEWER`
+   correctly maps to `409` (task §12: "claim-ownership conflict: 409"), not
+   `422`. Fixed by seeding an already-`CLAIMED` case for that scenario
+   (`tests/support/review_fixtures.seed_review_case`'s new `claimed_by`
+   parameter) so it isolates the one error code it means to test; a new,
+   separate test (`test_claim_ownership_conflict_returns_409`) now exercises
+   the genuine ownership-conflict scenario directly.
+
+This CI round is exactly what this milestone's own instructions anticipated:
+real defects that only a real database run could surface (item 1 needed
+actual persisted state across two requests; item 2 needed the real
+fingerprint/conflict machinery). Neither was a false start from mocking a
+result — both are now fixed, pushed, and awaiting the next CI run before this
+report's merge-readiness verdict (§18) can be finalized.
+
 ## 14. Security verification (task §21)
 
 - No DSN, password, or Neon hostname committed in this milestone's diff

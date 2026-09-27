@@ -102,3 +102,14 @@ def seeded_case(runtime_dsn, local_config, tenant_id):
     from tests.support.review_fixtures import seed_review_case
 
     return seed_review_case(runtime_dsn, local_config, tenant_id=tenant_id)
+
+
+@pytest.fixture()
+def seeded_claimed_case(runtime_dsn, local_config, tenant_id):
+    """A review case already `CLAIMED` by `ap-reviewer-1`, for tests that
+    need to submit a decision/correction without first driving a real
+    CLAIM command through the API."""
+
+    from tests.support.review_fixtures import seed_review_case
+
+    return seed_review_case(runtime_dsn, local_config, tenant_id=tenant_id, claimed_by="ap-reviewer-1")

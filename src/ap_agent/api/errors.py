@@ -35,7 +35,18 @@ _LOGGER = logging.getLogger("ap_agent.api")
 
 
 def command_http_error(errors: tuple[str, ...]) -> int:
-    """`command_http_error` (notebook cell 108, verbatim mapping)."""
+    """Extends notebook cell 108's `command_http_error` (its
+    ACTION_NOT_PERMITTED/CROSS_TENANT_COMMAND -> 403 and stale-revision/
+    idempotency-conflict -> 409 branches are ported verbatim) with one more
+    409 branch task §12 requires and the notebook's own mapping does not
+    cover: "claim-ownership conflict: 409" -- a different reviewer than the
+    one who holds the claim attempting a decision/resume on it
+    (`CASE_ASSIGNED_TO_DIFFERENT_REVIEWER`/`DECISION_ACTOR_MISMATCH`) is a
+    conflict over who may act, not a generic validation failure, and must
+    not fall through to this function's 422 default. Ordered after the
+    stale-revision checks so a request that is stale *and* ownership-
+    mismatched still reports the same code the equivalent stale-only
+    request would."""
 
     if "ACTION_NOT_PERMITTED" in errors:
         return status.HTTP_403_FORBIDDEN

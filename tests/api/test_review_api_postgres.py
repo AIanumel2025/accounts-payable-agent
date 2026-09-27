@@ -202,9 +202,15 @@ def test_payment_command_is_rejected_with_422(runtime_dsn, local_config, tenant_
         assert response.status_code == 422
 
 
-def test_correction_without_evidence_is_rejected(runtime_dsn, local_config, tenant_id, seeded_case):
+def test_correction_without_evidence_is_rejected(runtime_dsn, local_config, tenant_id, seeded_claimed_case):
+    # Seeded already CLAIMED by ap-reviewer-1 (rather than claimed through a
+    # real CLAIM command first) so this scenario isolates
+    # CORRECTION_EVIDENCE_REQUIRED from CASE_NOT_CLAIMED/
+    # CASE_ASSIGNED_TO_DIFFERENT_REVIEWER, which would otherwise also fire
+    # and map to a 409 (claim-ownership conflict) ahead of the 422 this
+    # test asserts.
     with _client(runtime_dsn, local_config, enable_writes=False) as client:
-        request_body = _claim_request(seeded_case, idempotency_key="m10-api-correction-v1")
+        request_body = _claim_request(seeded_claimed_case, idempotency_key="m10-api-correction-v1")
         request_body["action"] = "CORRECT"
         request_body["disposition"] = "CORRECTED"
         request_body["reason_codes"] = ["PURCHASE_ORDER_CORRECTED"]
@@ -221,13 +227,45 @@ def test_correction_without_evidence_is_rejected(runtime_dsn, local_config, tena
         ]
 
         response = client.post(
-            f"/api/v1/review-cases/{seeded_case.review_case_id}/commands",
+            f"/api/v1/review-cases/{seeded_claimed_case.review_case_id}/commands",
             headers=_headers(tenant_id, actor_id="ap-reviewer-1", role=InterfaceRole.AP_REVIEWER),
             json=request_body,
         )
 
         assert response.status_code == 422
         assert "CORRECTION_EVIDENCE_REQUIRED" in response.json()["errors"]
+
+
+def test_claim_ownership_conflict_returns_409(runtime_dsn, local_config, tenant_id, seeded_claimed_case):
+    """A different reviewer than the one who holds the claim attempting a
+    decision on it is a claim-ownership conflict (task §12: "claim-ownership
+    conflict: 409"), not a generic 422 validation failure."""
+
+    with _client(runtime_dsn, local_config, enable_writes=False) as client:
+        request_body = _claim_request(seeded_claimed_case, idempotency_key="m10-api-ownership-conflict-v1")
+        request_body["action"] = "CORRECT"
+        request_body["disposition"] = "CORRECTED"
+        request_body["reason_codes"] = ["PURCHASE_ORDER_CORRECTED"]
+        request_body["notes"] = "PO reviewed."
+        request_body["corrections"] = [
+            {
+                "field_name": "PURCHASE_ORDER_NUMBER",
+                "line_number": None,
+                "previous_value": "99",
+                "corrected_value": "99A",
+                "reason": "Reviewer verified.",
+                "evidence_reference_ids": ["ev-po-1"],
+            }
+        ]
+
+        response = client.post(
+            f"/api/v1/review-cases/{seeded_claimed_case.review_case_id}/commands",
+            headers=_headers(tenant_id, actor_id="ap-reviewer-2", role=InterfaceRole.AP_REVIEWER),
+            json=request_body,
+        )
+
+        assert response.status_code == 409
+        assert "CASE_ASSIGNED_TO_DIFFERENT_REVIEWER" in response.json()["errors"]
 
 
 # ==============================================================
@@ -237,10 +275,19 @@ def test_correction_without_evidence_is_rejected(runtime_dsn, local_config, tena
 
 def test_write_enabled_claim_then_release_round_trip(runtime_dsn, local_config, tenant_id, seeded_case):
     with _client(runtime_dsn, local_config, enable_writes=True) as client:
+        # A true idempotent retry resends the identical request body,
+        # including `command_id` -- `review_command_fingerprint` (notebook
+        # cell 104, ported verbatim) treats a *different* command_id under
+        # the same idempotency_key as different content (CONFLICT, not
+        # IDEMPOTENT), matching the notebook's own conflict scenario. A
+        # freshly re-generated command_id here would therefore be a content
+        # conflict, not a retry.
+        claim_request = _claim_request(seeded_case, idempotency_key="m10-api-write-claim-v1")
+
         claim_response = client.post(
             f"/api/v1/review-cases/{seeded_case.review_case_id}/commands",
             headers=_headers(tenant_id, actor_id="ap-operator-1", role=InterfaceRole.AP_OPERATOR),
-            json=_claim_request(seeded_case, idempotency_key="m10-api-write-claim-v1"),
+            json=claim_request,
         )
 
         assert claim_response.status_code == 200
@@ -250,7 +297,7 @@ def test_write_enabled_claim_then_release_round_trip(runtime_dsn, local_config, 
         retry_response = client.post(
             f"/api/v1/review-cases/{seeded_case.review_case_id}/commands",
             headers=_headers(tenant_id, actor_id="ap-operator-1", role=InterfaceRole.AP_OPERATOR),
-            json=_claim_request(seeded_case, idempotency_key="m10-api-write-claim-v1"),
+            json=claim_request,
         )
 
         assert retry_response.status_code == 200

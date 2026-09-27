@@ -110,21 +110,23 @@ def submit_review_command(
 
     is_resume = command.action == ReviewAction.RESUME_WORKFLOW
 
-    if not is_resume:
-        validation_errors = validate_review_command(command, context, interface_config)
-
-        if validation_errors:
-            raise ReviewCommandRejectedError(validation_errors, "Review command failed validation.")
-
-    elif not api_config.enable_review_command_writes:
-        # Resume validation depends on the latest *persisted* resolved
-        # decision; it is deliberately not simulated in validation-only
-        # mode (notebook cell 108's identical choice).
-        raise ReviewCommandRejectedError(
-            ("RESUME_REQUIRES_RESOLVED_DECISION",), "Resume commands require write-enabled mode."
-        )
-
     if not api_config.enable_review_command_writes:
+        # Validation-only mode never persists anything, so there is no
+        # stored command to be idempotent against yet -- validating here,
+        # against a plain unlocked read of the current context, is safe.
+        if not is_resume:
+            validation_errors = validate_review_command(command, context, interface_config)
+
+            if validation_errors:
+                raise ReviewCommandRejectedError(validation_errors, "Review command failed validation.")
+        else:
+            # Resume validation depends on the latest *persisted* resolved
+            # decision; it is deliberately not simulated in validation-only
+            # mode (notebook cell 108's identical choice).
+            raise ReviewCommandRejectedError(
+                ("RESUME_REQUIRES_RESOLVED_DECISION",), "Resume commands require write-enabled mode."
+            )
+
         return ApiEnvelope(
             request_id=uuid4(),
             status="VALIDATED",
@@ -140,6 +142,15 @@ def submit_review_command(
             generated_at=interface_utc_now(),
         )
 
+    # Write-enabled mode: do *not* pre-validate against this unlocked read
+    # here. An idempotent retry's re-read context has already moved on from
+    # what the original, now-stored command observed (e.g. a retried CLAIM
+    # sees its own prior CLAIM's new case_status/workflow_revision), which
+    # would make a plain re-validation reject a request that is actually a
+    # valid identical retry. Each executor below checks for a stored
+    # idempotent match *before* it validates, inside one locked transaction
+    # (`ap_agent.services.review_commands`/`review_decisions`/
+    # `workflow_resume`), which is the only correct place for this check.
     if command.action in _ASSIGNMENT_ACTIONS:
         result = execute_assignment_command(repository, command, interface_config)
         response_payload = CommandResultResponse.from_domain(result).model_dump(mode="json")

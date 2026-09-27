@@ -112,9 +112,12 @@ def seed_review_case(
     source_name: str = "seeded-review-case.pdf",
     review_reasons: tuple[str, ...] = ("SUPPLIER_NAME_MISSING",),
     priority: int = 3,
+    claimed_by: str | None = None,
 ) -> SeededReviewCase:
-    """Seed one active (`OPEN`) review case for `tenant_id`. The caller
-    must have already registered the tenant."""
+    """Seed one review case for `tenant_id`, `OPEN` by default, or already
+    `CLAIMED` by `claimed_by` when given (for tests that need a case a
+    specific reviewer already owns, without going through a real CLAIM
+    command). The caller must have already registered the tenant."""
 
     repository = PostgresMemoryRepository(dsn, config)
 
@@ -195,6 +198,7 @@ def seed_review_case(
     )
 
     review_case_id = uuid.uuid4()
+    review_status = "CLAIMED" if claimed_by is not None else "OPEN"
 
     with open_connection(dsn, config) as connection:
         with connection.cursor() as cursor:
@@ -204,15 +208,17 @@ def seed_review_case(
                 INSERT INTO ap_agent.review_cases
                     (review_id, tenant_id, workflow_id, review_status, priority,
                      reason_codes, summary, assigned_to)
-                VALUES (%s, %s, %s, 'OPEN', %s, %s, %s, NULL);
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
                 """,
                 (
                     review_case_id,
                     tenant_id,
                     workflow_record.memory_id,
+                    review_status,
                     priority,
                     list(review_reasons),
                     f"Review required: {', '.join(review_reasons)}",
+                    claimed_by,
                 ),
             )
 
