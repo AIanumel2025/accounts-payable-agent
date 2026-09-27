@@ -421,6 +421,33 @@ fingerprint/conflict machinery). Neither was a false start from mocking a
 result — both are now fixed, pushed, and awaiting the next CI run before this
 report's merge-readiness verdict (§18) can be finalized.
 
+### 13.4 CI round 2 result and fix (run 36334011628)
+
+The workflow's "Run Phase 9 (M10) API tests" step went from 2 failures to 1
+(25 passed): `test_write_enabled_claim_then_release_round_trip`'s *first*
+claim (not the retry) unexpectedly returned `422`. Every other test using the
+identical helper pattern (build the request body via `_claim_request`, then
+pass `headers=_headers(...)` inline to `client.post`) had already passed
+in the same run, which rules out a deterministic validation bug: if
+`validate_review_command`'s `ACTOR_AUTHENTICATED_AFTER_REQUEST` check had
+reliably fired for this call shape, every test built the same way would have
+failed too. The actual cause is a latent race in the test helpers
+themselves, not production code: `_claim_request(...)`'s `requested_at` is
+captured at one `interface_utc_now()` call, and `_headers(...)`'s
+`authenticated_at` is captured at a *later* `interface_utc_now()` call (it is
+evaluated as part of the `client.post(..., headers=_headers(...), ...)` call,
+after the request body was already built) — on most runs these two
+back-to-back timestamps land in the same clock tick and compare equal, but
+whenever the real clock advances between them, `authenticated_at >
+requested_at` and `validate_review_command` correctly (if unhelpfully, for a
+test) reports `ACTOR_AUTHENTICATED_AFTER_REQUEST`, which has no dedicated
+`command_http_error` branch and falls through to the `422` default. **Fixed**
+by backdating `_headers`'s `X-Authenticated-At` by a fixed 5-second margin
+instead of using "now": a real client always authenticates before building
+the request it authenticates, so this also better reflects reality, and it
+removes the race for every test in this file that shares the pattern, not
+just the one CI happened to catch it on.
+
 ## 14. Security verification (task §21)
 
 - No DSN, password, or Neon hostname committed in this milestone's diff

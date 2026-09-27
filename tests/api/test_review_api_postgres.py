@@ -13,6 +13,7 @@ prints the DSN or any credential.
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,11 +36,18 @@ def _client(runtime_dsn, local_config, *, enable_writes: bool, allowed_tenant_id
 
 
 def _headers(tenant_id: uuid.UUID, *, actor_id: str, role: InterfaceRole) -> dict[str, str]:
+    # Backdated by a safety margin, never "now": `validate_review_command`
+    # rejects a command whose `requested_at` (set inside `_claim_request`,
+    # itself built before this function is ever called by a caller's
+    # `headers=_headers(...)` keyword argument) is *earlier* than
+    # `authenticated_at` (ACTOR_AUTHENTICATED_AFTER_REQUEST) -- with no
+    # margin, a fast-enough clock tick between those two nearly-simultaneous
+    # calls can flip their real-time order and trip that check spuriously.
     return {
         "X-Tenant-ID": str(tenant_id),
         "X-Actor-ID": actor_id,
         "X-Actor-Role": role.value,
-        "X-Authenticated-At": interface_utc_now().isoformat(),
+        "X-Authenticated-At": (interface_utc_now() - timedelta(seconds=5)).isoformat(),
     }
 
 
