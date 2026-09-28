@@ -598,7 +598,43 @@ correction's actual CI result is recorded here once it lands:
 
 - Correction commit: `8e9d683ceaae7a81c0c5911d8e506bf58a19b9fa` ("Fix
   real-integration acceptance: seed an isolated tenant per run").
-- CI run: `<filled in once observed>`.
+
+### 21.1 CI round 1 result and fix (run `36470444659`, commit `d0000b4`)
+
+Real progress, one real remaining defect: seeding itself now works end to
+end against the live database — `Seeded M11A acceptance tenant
+f1e07952-559b-43c9-98a1-a108b83fc810 (4-invoice controlled-fixture
+baseline)`, and cleanup ran correctly too (`deleted 3 review_cases
+row(s)`). FastAPI then failed to start:
+`ap_agent.exceptions.PostgresConfigurationError: AP_AGENT_POSTGRES_DSN is
+not a valid PostgreSQL connection string.`
+
+Root cause: `_ensure_runtime_dsn` composed the least-privilege role's DSN
+with `psycopg.conninfo.make_conninfo(**params)`, which returns libpq
+**keyword=value** format (`user=... host=... dbname=...`), not a
+`postgresql://` URI. `ap_agent.db.connection.load_dsn` requires the DSN
+string to literally start with `postgresql://`/`postgres://` (the
+notebook's own original validation, `config/postgres.py`) — a
+perfectly valid, connectable DSN was rejected by that prefix check alone.
+
+**Fixed**: added `_build_dsn_uri`, which builds a real `postgresql://`
+URI from the same `conninfo_to_dict`-shaped params (percent-encoding
+`user`/`password` via `urllib.parse.quote`, carrying every other
+parameter — `sslmode`, `channel_binding`, etc. — through as a query
+string, so the transport-policy requirements `verify_transport_policy`
+checks are preserved). Verified locally: the built URI starts with
+`postgresql://`, and round-trips through `psycopg.conninfo.conninfo_to_dict`
+back to the exact original `user`/`password`/`host`/`dbname`/`sslmode`/
+`channel_binding` values, including with deliberately special-character
+passwords (`@`, `:`, `/`, `?`, `&`, a space) as a defense-in-depth check
+beyond what a real `secrets.token_urlsafe` password would ever contain.
+
+This is exactly the kind of real, only-a-live-database-run-could-surface
+defect this milestone's own instructions anticipated (mirroring M10's own
+CI-round history, `docs/m10_phase_9_review_api_report.md` §13.3) — not a
+false start from mocking a result. Pushed as commit
+`<filled in after push>`; next CI round's result recorded below once
+observed.
 
 ## 22. Blockers
 

@@ -126,8 +126,41 @@ def _local_config():
     )
 
 
+def _build_dsn_uri(params: dict) -> str:
+    """Builds a `postgresql://` URI from a `conninfo_to_dict`-shaped params
+    dict. `psycopg.conninfo.make_conninfo` -- the obvious first choice --
+    instead returns libpq keyword=value format (`user=... host=...`), which
+    `ap_agent.db.connection.load_dsn` rejects: it requires the DSN string
+    to literally start with `postgresql://`/`postgres://`
+    (`config/postgres.py`'s own notebook-derived validation). `user`/
+    `password` are percent-encoded (a generated role name and a
+    `secrets.token_urlsafe` password are both already URL-safe, but this
+    holds even if that ever changes); every remaining param (`sslmode`,
+    `channel_binding`, etc.) becomes a query-string parameter, so the
+    transport-policy requirements `verify_transport_policy` checks are
+    preserved.
+    """
+
+    from urllib.parse import quote, urlencode
+
+    params = dict(params)
+    user = quote(str(params.pop("user")), safe="")
+    password = quote(str(params.pop("password")), safe="")
+    host = params.pop("host", "localhost")
+    port = params.pop("port", None)
+    dbname = params.pop("dbname", "")
+
+    netloc_host = f"{host}:{port}" if port else host
+    uri = f"postgresql://{user}:{password}@{netloc_host}/{dbname}"
+
+    if params:
+        uri += f"?{urlencode(params)}"
+
+    return uri
+
+
 def _ensure_runtime_dsn(owner_dsn: str, config) -> str:
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    from psycopg.conninfo import conninfo_to_dict
 
     from ap_agent.db import roles as db_roles
     from ap_agent.db.migration_runner import apply_all_migrations
@@ -152,7 +185,7 @@ def _ensure_runtime_dsn(owner_dsn: str, config) -> str:
     params = conninfo_to_dict(owner_dsn)
     params["user"] = RUNTIME_ROLE_NAME
     params["password"] = password
-    return make_conninfo(**params)
+    return _build_dsn_uri(params)
 
 
 def cmd_seed(args: argparse.Namespace) -> int:
