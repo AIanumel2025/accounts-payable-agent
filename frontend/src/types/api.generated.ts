@@ -131,6 +131,90 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ApiEnvelope[DashboardResponse] */
+        ApiEnvelope_DashboardResponse_: {
+            data?: components["schemas"]["DashboardResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
+        /** ApiEnvelope[HealthResponse] */
+        ApiEnvelope_HealthResponse_: {
+            data?: components["schemas"]["HealthResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
+        /** ApiEnvelope[InvoiceDetailResponse] */
+        ApiEnvelope_InvoiceDetailResponse_: {
+            data?: components["schemas"]["InvoiceDetailResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
+        /** ApiEnvelope[ReviewQueuePageResponse] */
+        ApiEnvelope_ReviewQueuePageResponse_: {
+            data?: components["schemas"]["ReviewQueuePageResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
         /** ApiReviewCommandRequest */
         ApiReviewCommandRequest: {
             action: components["schemas"]["ReviewAction"];
@@ -164,31 +248,331 @@ export interface components {
              */
             requested_at: string;
         };
+        /** DashboardResponse */
+        DashboardResponse: {
+            /** Completed Invoices */
+            completed_invoices: number;
+            /** Failed Invoices */
+            failed_invoices: number;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Open Review Cases */
+            open_review_cases: number;
+            /** Processing Invoices */
+            processing_invoices: number;
+            /** Review Reason Counts */
+            review_reason_counts: components["schemas"]["ReviewReasonCount"][];
+            /** Review Required Invoices */
+            review_required_invoices: number;
+            /**
+             * Tenant Id
+             * Format: uuid
+             */
+            tenant_id: string;
+            /** Total Invoices */
+            total_invoices: number;
+            /** Unassigned Review Cases */
+            unassigned_review_cases: number;
+        };
+        /** FinancialCheckResponse */
+        FinancialCheckResponse: {
+            /** Check Id */
+            check_id: string;
+            /** Check Type */
+            check_type: string;
+            /** Evidence Reference Ids */
+            evidence_reference_ids: string[];
+            /** Expected Value */
+            expected_value: string | null;
+            /** Message */
+            message: string;
+            /** Observed Value */
+            observed_value: string | null;
+            /** Status */
+            status: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HealthResponse */
+        HealthResponse: {
+            /** Api Version */
+            api_version: string;
+            /**
+             * Command Mode
+             * @enum {string}
+             */
+            command_mode: "COMMIT" | "VALIDATION_ONLY";
+            /**
+             * Payment Execution
+             * @constant
+             */
+            payment_execution: "PROHIBITED";
+            /** Service */
+            service: string;
         };
         /**
          * HumanReviewDisposition
          * @enum {string}
          */
         HumanReviewDisposition: "APPROVED" | "REJECTED" | "HOLD" | "NEEDS_INFORMATION" | "CORRECTED";
+        /** InterfaceFieldValueResponse */
+        InterfaceFieldValueResponse: {
+            /** Confidence */
+            confidence: number | null;
+            /** Evidence Reference Ids */
+            evidence_reference_ids: string[];
+            field_name: components["schemas"]["InvoiceFieldName"];
+            /** Normalized Value */
+            normalized_value: string | null;
+            /** Raw Value */
+            raw_value: string | null;
+            /** Review Required */
+            review_required: boolean;
+            value_type: components["schemas"]["NormalizedValueType"];
+        };
+        /** InvoiceDetailResponse */
+        InvoiceDetailResponse: {
+            /**
+             * Batch Id
+             * Format: uuid
+             */
+            batch_id: string;
+            case_status: components["schemas"]["ReviewCaseStatus"];
+            current_stage: components["schemas"]["OrchestrationStage"];
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Fields */
+            fields: components["schemas"]["InterfaceFieldValueResponse"][];
+            /** Financial Checks */
+            financial_checks: components["schemas"]["FinancialCheckResponse"][];
+            /** Line Matches */
+            line_matches: components["schemas"]["LineMatchResponse"][];
+            /** Original Document Uri */
+            original_document_uri: string | null;
+            /**
+             * Review Case Id
+             * Format: uuid
+             */
+            review_case_id: string;
+            /** Review Decisions */
+            review_decisions: components["schemas"]["ReviewDecisionResponse"][];
+            /** Review Reasons */
+            review_reasons: string[];
+            /** Review Required */
+            review_required: boolean;
+            /** Review Revision */
+            review_revision: number;
+            /** Source Document Sha256 */
+            source_document_sha256: string;
+            /** Source Name */
+            source_name: string;
+            /**
+             * Tenant Id
+             * Format: uuid
+             */
+            tenant_id: string;
+            /** Timeline */
+            timeline: components["schemas"]["TimelineEventResponse"][];
+            /**
+             * Workflow Id
+             * Format: uuid
+             */
+            workflow_id: string;
+            workflow_status: components["schemas"]["InvoiceWorkflowStatus"];
+        };
         /**
          * InvoiceFieldName
          * @enum {string}
          */
         InvoiceFieldName: "SUPPLIER_NAME" | "SUPPLIER_ADDRESS" | "CUSTOMER_NAME" | "CUSTOMER_ADDRESS" | "INVOICE_NUMBER" | "INVOICE_DATE" | "DUE_DATE" | "PURCHASE_ORDER_NUMBER" | "CURRENCY" | "SUBTOTAL" | "TAX_AMOUNT" | "DISCOUNT_AMOUNT" | "SHIPPING_AMOUNT" | "TOTAL_AMOUNT" | "PAYMENT_TERMS" | "LINE_DESCRIPTION" | "LINE_QUANTITY" | "LINE_UNIT_PRICE" | "LINE_AMOUNT";
         /**
+         * InvoiceWorkflowStatus
+         * @enum {string}
+         */
+        InvoiceWorkflowStatus: "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "REVIEW_REQUIRED" | "FAILED" | "SKIPPED";
+        /** LineMatchResponse */
+        LineMatchResponse: {
+            /** Description Status */
+            description_status: string;
+            /** Invoice Line Number */
+            invoice_line_number: number | null;
+            /** Line Match Id */
+            line_match_id: string;
+            /** Line Total Status */
+            line_total_status: string;
+            /** Purchase Order Line Number */
+            purchase_order_line_number: number | null;
+            /** Quantity Status */
+            quantity_status: string;
+            /** Review Reasons */
+            review_reasons: string[];
+            /** Review Required */
+            review_required: boolean;
+            /** Unit Price Status */
+            unit_price_status: string;
+        };
+        /**
+         * NormalizedValueType
+         * @enum {string}
+         */
+        NormalizedValueType: "TEXT" | "DATE" | "DECIMAL" | "CURRENCY_CODE";
+        /**
+         * OrchestrationStage
+         * @enum {string}
+         */
+        OrchestrationStage: "INGESTION" | "PREPROCESSING" | "OCR" | "NORMALIZATION" | "FINANCIAL_VALIDATION" | "REFERENCE_MATCHING" | "MEMORY_PERSISTENCE" | "HUMAN_REVIEW" | "COMPLETED";
+        /** PaginationMeta */
+        PaginationMeta: {
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total Count */
+            total_count: number;
+            /** Total Pages */
+            total_pages: number;
+        };
+        /**
          * ReviewAction
          * @enum {string}
          */
         ReviewAction: "CLAIM" | "RELEASE" | "ACCEPT" | "CORRECT" | "CONFIRM_SUPPLIER" | "CONFIRM_PURCHASE_ORDER" | "REQUEST_INFORMATION" | "ESCALATE" | "REJECT" | "RESUME_WORKFLOW";
         /**
+         * ReviewCaseStatus
+         * @enum {string}
+         */
+        ReviewCaseStatus: "OPEN" | "IN_REVIEW" | "AWAITING_INFORMATION" | "ESCALATED" | "RESOLVED" | "REJECTED";
+        /** ReviewDecisionResponse */
+        ReviewDecisionResponse: {
+            /**
+             * Decided At
+             * Format: date-time
+             */
+            decided_at: string;
+            /**
+             * Decision Id
+             * Format: uuid
+             */
+            decision_id: string;
+            disposition: components["schemas"]["HumanReviewDisposition"];
+            /** Notes */
+            notes: string | null;
+            /** Reason Codes */
+            reason_codes: string[];
+            /** Reviewer Id */
+            reviewer_id: string;
+        };
+        /**
          * ReviewPriority
          * @enum {string}
          */
         ReviewPriority: "LOW" | "NORMAL" | "HIGH" | "CRITICAL";
+        /** ReviewQueueItem */
+        ReviewQueueItem: {
+            /** Assigned Reviewer Id */
+            assigned_reviewer_id: string | null;
+            /**
+             * Batch Id
+             * Format: uuid
+             */
+            batch_id: string;
+            case_status: components["schemas"]["ReviewCaseStatus"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Currency */
+            currency: string | null;
+            current_stage: components["schemas"]["OrchestrationStage"];
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Financial Validation Status */
+            financial_validation_status: string | null;
+            /** Invoice Number */
+            invoice_number: string | null;
+            priority: components["schemas"]["ReviewPriority"];
+            /** Purchase Order Status */
+            purchase_order_status: string | null;
+            /**
+             * Review Case Id
+             * Format: uuid
+             */
+            review_case_id: string;
+            /** Review Reasons */
+            review_reasons: string[];
+            /** Review Revision */
+            review_revision: number;
+            /** Source Name */
+            source_name: string;
+            /** Supplier Name */
+            supplier_name: string | null;
+            /** Supplier Status */
+            supplier_status: string | null;
+            /**
+             * Tenant Id
+             * Format: uuid
+             */
+            tenant_id: string;
+            /** Total Amount */
+            total_amount: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Workflow Id
+             * Format: uuid
+             */
+            workflow_id: string;
+            workflow_status: components["schemas"]["InvoiceWorkflowStatus"];
+        };
+        /** ReviewQueuePageResponse */
+        ReviewQueuePageResponse: {
+            /** Items */
+            items: components["schemas"]["ReviewQueueItem"][];
+            pagination: components["schemas"]["PaginationMeta"];
+        };
+        /** ReviewReasonCount */
+        ReviewReasonCount: {
+            /** Count */
+            count: number;
+            /** Reason */
+            reason: string;
+        };
+        /** TimelineEventResponse */
+        TimelineEventResponse: {
+            /** Actor Id */
+            actor_id: string | null;
+            /** Event Id */
+            event_id: string;
+            /** Event Type */
+            event_type: string;
+            /** Message */
+            message: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Stage */
+            stage: string | null;
+            /** Status */
+            status: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -233,7 +617,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiEnvelope"];
+                    "application/json": components["schemas"]["ApiEnvelope_DashboardResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -275,7 +659,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiEnvelope"];
+                    "application/json": components["schemas"]["ApiEnvelope_ReviewQueuePageResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -312,7 +696,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiEnvelope"];
+                    "application/json": components["schemas"]["ApiEnvelope_InvoiceDetailResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -382,7 +766,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiEnvelope"];
+                    "application/json": components["schemas"]["ApiEnvelope_HealthResponse_"];
                 };
             };
         };

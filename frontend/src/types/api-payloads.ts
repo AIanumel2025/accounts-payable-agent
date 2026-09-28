@@ -1,49 +1,46 @@
 import type { components } from "@/types/api.generated";
 
 /**
- * Narrow types for `ApiEnvelope.data` (M11A task §4).
+ * Typed aliases for `ApiEnvelope.data` per endpoint (M11B task §4).
  *
- * The M10 FastAPI routes declare `response_model=ApiEnvelope`, whose `data`
- * field is typed `Optional[Any]` in Pydantic (`src/ap_agent/api/schemas.py`)
- * -- each route builds its actual payload with an explicit `from_domain`
- * classmethod and calls `.model_dump(mode="json")` on it, but that payload
- * type never appears in the OpenAPI schema itself, so `openapi-typescript`
- * can only generate `data?: unknown | null` for every endpoint (verified in
- * `src/types/api.generated.ts`).
+ * M11A found `ApiEnvelope.data` typed `Optional[Any]` in Pydantic
+ * (`src/ap_agent/api/schemas.py`), so `openapi-typescript` could only
+ * generate `data?: unknown` for every endpoint, and worked around it with
+ * hand-maintained shadow interfaces in this file -- something `api:check`
+ * could not catch drift in.
  *
- * These payload shapes are therefore hand-written from
- * `src/ap_agent/api/schemas.py`'s `DashboardResponse`/`ReviewReasonCount`
- * and `src/ap_agent/api/routes/health.py`'s inline health payload, and must
- * be kept in sync by hand if those backend shapes change -- `api:check`
- * cannot catch drift in this file because the backend does not publish it.
- * This is a documented limitation, not a silent gap (CLAUDE.md).
+ * M11B fixed the root cause instead of extending the workaround:
+ * `ApiEnvelope` is now `Generic[T]` in `schemas.py`, and every read route
+ * declares `response_model=ApiEnvelope[SomeResponse]` (verified to produce
+ * byte-identical runtime JSON to before -- see
+ * `docs/m11b_review_queue_detail_report.md`, "OpenAPI envelope decision").
+ * FastAPI now emits a distinct, fully-typed `ApiEnvelope_SomeResponse_`
+ * schema per endpoint, so every payload type below is a plain alias into
+ * the generated file -- no hand-maintained shape, no drift `api:check`
+ * cannot catch.
  */
 
-export type ApiEnvelope = components["schemas"]["ApiEnvelope"];
+export type DashboardPayload = components["schemas"]["DashboardResponse"];
+export type ReviewReasonCountPayload = components["schemas"]["ReviewReasonCount"];
 
-export interface ReviewReasonCountPayload {
-  reason: string;
-  count: number;
-}
+export type HealthPayload = components["schemas"]["HealthResponse"];
+export type HealthCommandMode = HealthPayload["command_mode"];
 
-export interface DashboardPayload {
-  tenant_id: string;
-  generated_at: string;
-  total_invoices: number;
-  processing_invoices: number;
-  completed_invoices: number;
-  review_required_invoices: number;
-  failed_invoices: number;
-  open_review_cases: number;
-  unassigned_review_cases: number;
-  review_reason_counts: ReviewReasonCountPayload[];
-}
+export type ReviewQueuePagePayload = components["schemas"]["ReviewQueuePageResponse"];
+export type ReviewQueueItemPayload = components["schemas"]["ReviewQueueItem"];
+export type PaginationMetaPayload = components["schemas"]["PaginationMeta"];
 
-export type HealthCommandMode = "COMMIT" | "VALIDATION_ONLY";
+export type InvoiceDetailPayload = components["schemas"]["InvoiceDetailResponse"];
+export type InterfaceFieldValuePayload = components["schemas"]["InterfaceFieldValueResponse"];
+export type FinancialCheckPayload = components["schemas"]["FinancialCheckResponse"];
+export type LineMatchPayload = components["schemas"]["LineMatchResponse"];
+export type TimelineEventPayload = components["schemas"]["TimelineEventResponse"];
+export type ReviewDecisionPayload = components["schemas"]["ReviewDecisionResponse"];
 
-export interface HealthPayload {
-  service: string;
-  api_version: string;
-  command_mode: HealthCommandMode;
-  payment_execution: "PROHIBITED";
-}
+export type ReviewCaseStatusValue = components["schemas"]["ReviewCaseStatus"];
+export type ReviewPriorityValue = components["schemas"]["ReviewPriority"];
+export type InvoiceWorkflowStatusValue = components["schemas"]["InvoiceWorkflowStatus"];
+export type OrchestrationStageValue = components["schemas"]["OrchestrationStage"];
+export type InvoiceFieldNameValue = components["schemas"]["InvoiceFieldName"];
+export type NormalizedValueTypeValue = components["schemas"]["NormalizedValueType"];
+export type HumanReviewDispositionValue = components["schemas"]["HumanReviewDisposition"];

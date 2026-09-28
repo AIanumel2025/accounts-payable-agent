@@ -1,7 +1,10 @@
-name: M11A frontend foundation
+name: M11A/M11B frontend foundation
 
-# Dedicated to the M11A human-review frontend (task brief §18). Runs only
-# when frontend code or the API contract it is generated from could have
+# Dedicated to the M11A/M11B human-review frontend (M11A task brief §18,
+# extended in place by M11B task §19/§20 -- "extend the EXISTING M11
+# frontend CI workflow (not duplicate)" -- rather than a second, parallel
+# workflow file). Runs only when frontend code, the API contract it is
+# generated from, or the backend routes/schemas it exercises could have
 # changed -- never on a documentation-only or unrelated backend-only
 # commit, so a docs-only follow-up never triggers this job (and never the
 # separate, much longer M8/M9/M10 PaddleOCR/PostgreSQL acceptance workflow,
@@ -12,11 +15,15 @@ on:
     paths:
       - "frontend/**"
       - "scripts/export_openapi_schema.py"
+      - "scripts/manage_m11a_acceptance_tenant.py"
       - "src/ap_agent/api/**"
       - "src/ap_agent/models/interface.py"
       - "src/ap_agent/models/orchestration.py"
       - "src/ap_agent/models/memory.py"
       - "src/ap_agent/services/review_queries.py"
+      - "src/ap_agent/repositories/review_repository.py"
+      - "src/ap_agent/repositories/postgres_memory_repository.py"
+      - "tests/support/review_fixtures.py"
       - "pyproject.toml"
       - ".github/workflows/m11a-frontend.yml"
   workflow_dispatch: {}
@@ -53,11 +60,11 @@ jobs:
           cache: "pip"
           cache-dependency-path: pyproject.toml
 
-      - name: Install ap_agent (api extra only -- schema export needs no PostgreSQL driver)
+      - name: Install ap_agent (api + dev extras -- schema export and API/schema tests need no PostgreSQL driver)
         working-directory: .
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[api]"
+          pip install -e ".[api,dev]"
 
       - name: Install frontend dependencies
         run: npm ci
@@ -70,6 +77,18 @@ jobs:
 
       - name: Check OpenAPI contract is up to date (no drift)
         run: npm run api:check
+
+      # M11B task §19: this branch's own changes touch src/ap_agent/api/schemas.py
+      # (ApiEnvelope became Generic[T]) and its routes -- the non-PostgreSQL
+      # subset of M10's own API/schema test suite re-verifies that change
+      # didn't alter runtime behaviour. The PostgreSQL-requiring subset
+      # (tests/api/test_review_api_postgres.py, tests/api/test_review_api_auth.py's
+      # own requires_postgres cases) runs in the real-integration job below,
+      # where a live database exists -- never silently skipped without being
+      # reported as such.
+      - name: M10 API/schema tests (non-PostgreSQL subset; backend schemas changed)
+        working-directory: .
+        run: python -m pytest -v -m "not requires_postgres" tests/api/ tests/unit/test_api_schemas.py
 
       - name: Unit and component tests
         run: npm run test
@@ -134,11 +153,11 @@ jobs:
             exit 1
           fi
 
-      - name: Install ap_agent (api + postgres extras)
+      - name: Install ap_agent (api + postgres + dev extras)
         working-directory: .
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[api,postgres]"
+          pip install -e ".[api,postgres,dev]"
 
       - name: Install frontend dependencies
         run: npm ci
@@ -149,10 +168,22 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      # M11A task §15: the real FastAPI + PostgreSQL (ap_agent_m8_test) +
-      # Next.js acceptance path. `AP_AGENT_TEST_POSTGRES_DSN` is mapped into
-      # the FastAPI child process's own environment by the script itself,
-      # never echoed and never written to a file (task §15/§16).
+      # M11B task §19: the PostgreSQL-requiring subset of M10's own
+      # API/schema tests (the non-PostgreSQL subset already ran in
+      # build-and-test above) -- a live database exists here, so this is
+      # the full suite, never a partial/skipped re-run reported as complete.
+      - name: M10 API/schema tests (full suite, including PostgreSQL-requiring cases)
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+        working-directory: .
+        run: python -m pytest -v tests/api/ tests/unit/test_api_schemas.py
+
+      # M11A task §15, extended by M11B task §18 to also seed and assert
+      # against the three named review-case detail fixtures: the real
+      # FastAPI + PostgreSQL (ap_agent_m8_test) + Next.js acceptance path.
+      # `AP_AGENT_TEST_POSTGRES_DSN` is mapped into the FastAPI child
+      # process's own environment by the script itself, never echoed and
+      # never written to a file (task §15/§16).
       - name: Run real FastAPI + PostgreSQL + Next.js acceptance
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}

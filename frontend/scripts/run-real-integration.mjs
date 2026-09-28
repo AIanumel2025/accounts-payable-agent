@@ -145,8 +145,12 @@ async function seedAcceptanceTenant(testDsn) {
     if (!parsed.tenant_id || !parsed.runtime_dsn) {
       throw new Error("Seeding script's output file did not contain both tenant_id and runtime_dsn.");
     }
+    // M11B task §18: the three named acceptance fixtures' review_case_ids,
+    // so the acceptance spec can build their exact detail-page URLs
+    // without re-deriving or hardcoding a UUID anywhere.
+    const reviewCaseIds = parsed.review_case_ids ?? {};
 
-    return { tenantId: parsed.tenant_id, runtimeDsn: parsed.runtime_dsn };
+    return { tenantId: parsed.tenant_id, runtimeDsn: parsed.runtime_dsn, reviewCaseIds };
   } finally {
     // The output file holds a live database credential (the least-
     // privilege role's password, embedded in runtime_dsn) -- delete the
@@ -187,7 +191,7 @@ async function main() {
     return;
   }
 
-  const { tenantId, runtimeDsn } = await seedAcceptanceTenant(testDsn);
+  const { tenantId, runtimeDsn, reviewCaseIds } = await seedAcceptanceTenant(testDsn);
   console.log(`Acceptance tenant ${tenantId} seeded. FastAPI will run as its dedicated least-privilege role.`);
 
   const fastapiPort = await findFreePort();
@@ -244,6 +248,9 @@ async function main() {
       env: {
         ...process.env,
         AP_AGENT_ACCEPTANCE_BASE_URL: `http://127.0.0.1:${nextPort}`,
+        // review_case_ids are not secrets (M11B task §10) -- safe to pass
+        // as a plain env var, unlike runtimeDsn/testDsn above.
+        AP_AGENT_ACCEPTANCE_REVIEW_CASE_IDS: JSON.stringify(reviewCaseIds),
       },
     });
 

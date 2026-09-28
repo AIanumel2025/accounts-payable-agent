@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Seed/clean up an isolated acceptance tenant for the M11A real
-FastAPI + PostgreSQL + Next.js acceptance run (task §15).
+"""Seed/clean up an isolated acceptance tenant for the M11A/M11B real
+FastAPI + PostgreSQL + Next.js acceptance run (M11A task §15, extended by
+M11B task §10 rather than replaced -- see the `seed` subcommand below).
 
 Root cause this script fixes: the first version of
 `scripts/run-real-integration.mjs` pointed Next.js at the all-zero
@@ -23,11 +24,19 @@ Two subcommands:
         mechanism M8/M9/M10's own `requires_postgres` suites use, never a
         bespoke one), registers a brand-new tenant, and seeds exactly:
           - 1 automatically-completed invoice (no review required)
-          - 3 review-required invoices/cases, whose review reasons are
-            distributed so the dashboard's review-reason analytics read
-            INHERITED_FINANCIAL_VALIDATION_REVIEW=3, SUPPLIER_NAME_MISSING=2,
-            INVOICE_LINE_TOTAL_MISSING=1 -- the exact M11A task-brief
-            baseline (task §9). Writes `{"tenant_id": ..., "runtime_dsn": ...}`
+          - 3 review-required invoices/cases -- the M11B named acceptance
+            fixtures (`tests.support.review_fixtures.
+            NAMED_ACCEPTANCE_FIXTURE_KEYS`: "template1", "08181_warped",
+            "aaron_bergman"), each with real, cross-checked field/
+            financial-check/line-match content and exact per-fixture
+            counts (M11B task §9: 9/6/10 fields, 18/25/22 evidence
+            references, 12/12/8 financial checks, 5/0/1 line matches).
+            Their review reasons are the same three real documents'
+            reasons, which is also why the dashboard's review-reason
+            analytics still read INHERITED_FINANCIAL_VALIDATION_REVIEW=3,
+            SUPPLIER_NAME_MISSING=2, INVOICE_LINE_TOTAL_MISSING=1 -- the
+            exact M11A task-brief baseline (task §9), extended rather than
+            replaced. Writes `{"tenant_id": ..., "runtime_dsn": ...}`
             as JSON to `--output` (mode 0600, never printed to stdout);
             only the tenant id (a random UUID, not a secret) is printed.
 
@@ -83,10 +92,6 @@ EXPECTED_TEST_DATABASE = "ap_agent_m8_test"
 # an already-least-privilege existing role) never races a concurrently
 # running M8/M9/M10 workflow's use of its own role.
 RUNTIME_ROLE_NAME = "ap_agent_m11a_acceptance_runtime"
-
-INHERITED_FINANCIAL_VALIDATION_REVIEW = "INHERITED_FINANCIAL_VALIDATION_REVIEW"
-SUPPLIER_NAME_MISSING = "SUPPLIER_NAME_MISSING"
-INVOICE_LINE_TOTAL_MISSING = "INVOICE_LINE_TOTAL_MISSING"
 
 
 def _owner_dsn_or_fail() -> str:
@@ -195,7 +200,11 @@ def cmd_seed(args: argparse.Namespace) -> int:
     runtime_dsn = _ensure_runtime_dsn(owner_dsn, config)
 
     from ap_agent.repositories.postgres_memory_repository import PostgresMemoryRepository
-    from tests.support.review_fixtures import seed_completed_invoice, seed_review_case
+    from tests.support.review_fixtures import (
+        NAMED_ACCEPTANCE_FIXTURE_KEYS,
+        seed_completed_invoice,
+        seed_named_review_case,
+    )
 
     tenant_id = uuid.uuid4()
 
@@ -208,33 +217,41 @@ def cmd_seed(args: argparse.Namespace) -> int:
     # 1 automatically-completed invoice: dashboard's "Completed automatically" = 1.
     seed_completed_invoice(runtime_dsn, config, tenant_id=tenant_id)
 
-    # 3 review-required invoices, reasons distributed for the exact
-    # task-brief baseline: INHERITED_FINANCIAL_VALIDATION_REVIEW=3 (present
-    # on all three, as its name implies), SUPPLIER_NAME_MISSING=2,
-    # INVOICE_LINE_TOTAL_MISSING=1.
-    seed_review_case(
-        runtime_dsn, config, tenant_id=tenant_id,
-        review_reasons=(INHERITED_FINANCIAL_VALIDATION_REVIEW, SUPPLIER_NAME_MISSING),
-    )
-    seed_review_case(
-        runtime_dsn, config, tenant_id=tenant_id,
-        review_reasons=(INHERITED_FINANCIAL_VALIDATION_REVIEW, SUPPLIER_NAME_MISSING),
-    )
-    seed_review_case(
-        runtime_dsn, config, tenant_id=tenant_id,
-        review_reasons=(INHERITED_FINANCIAL_VALIDATION_REVIEW, INVOICE_LINE_TOTAL_MISSING),
-    )
+    # 3 review-required invoices -- the M11B named acceptance fixtures, in
+    # place of M11A's generic `seed_review_case` calls. Their review
+    # reasons (SUPPLIER_NAME_MISSING x2, INVOICE_LINE_TOTAL_MISSING x1, all
+    # three also INHERITED_FINANCIAL_VALIDATION_REVIEW) are the real
+    # fixtures' own reasons, so the M11A dashboard baseline
+    # (INHERITED_FINANCIAL_VALIDATION_REVIEW=3, SUPPLIER_NAME_MISSING=2,
+    # INVOICE_LINE_TOTAL_MISSING=1) still holds exactly -- extended, not
+    # replaced (M11B task §9).
+    named_review_cases = {
+        fixture_key: seed_named_review_case(runtime_dsn, config, tenant_id=tenant_id, fixture_key=fixture_key)
+        for fixture_key in NAMED_ACCEPTANCE_FIXTURE_KEYS
+    }
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Create with 0600 from the start (not chmod after) so the DSN/password
-    # is never briefly world/group-readable on disk.
+    # is never briefly world/group-readable on disk. Review-case ids are not
+    # secrets (they identify no more than a test fixture row), so they are
+    # safe to persist alongside the DSN for the acceptance suite to read
+    # back by fixture key rather than re-deriving them.
     fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
     with os.fdopen(fd, "w") as handle:
-        json.dump({"tenant_id": str(tenant_id), "runtime_dsn": runtime_dsn}, handle)
+        json.dump(
+            {
+                "tenant_id": str(tenant_id),
+                "runtime_dsn": runtime_dsn,
+                "review_case_ids": {
+                    fixture_key: str(seeded.review_case_id) for fixture_key, seeded in named_review_cases.items()
+                },
+            },
+            handle,
+        )
 
-    print(f"Seeded M11A acceptance tenant {tenant_id} (4-invoice controlled-fixture baseline).")
+    print(f"Seeded M11A/M11B acceptance tenant {tenant_id} (4-invoice controlled-fixture baseline).")
     print(f"Runtime DSN written to {output_path} (0600, never printed).")
     return 0
 

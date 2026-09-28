@@ -473,13 +473,15 @@ pytest tests/integration/test_review_postgres_integration.py -vv   # repository/
 The PostgreSQL-backed tests need the same `AP_AGENT_TEST_POSTGRES_DSN` as the
 rest of the PostgreSQL acceptance suite above — never a production DSN.
 
-## Frontend (M11A)
+## Frontend (M11A/M11B)
 
 `frontend/` is a Next.js (App Router, TypeScript strict) human-review
 interface that consumes the M10 FastAPI application through its published
-`/openapi.json` contract. M11A is **read-only**: it ships the application
-shell, design system, server-side API boundary, and a live dashboard, with
-no review-command writes, payment execution, or ERP posting.
+`/openapi.json` contract. It remains **read-only** through M11B: the
+application shell, design system, server-side API boundary, a live
+dashboard (M11A), and now a review queue and invoice/review-case detail
+page (M11B), with no review-command writes, payment execution, or ERP
+posting.
 
 ```text
 Browser → Next.js server-side boundary → FastAPI → PostgreSQL
@@ -488,6 +490,30 @@ Browser → Next.js server-side boundary → FastAPI → PostgreSQL
 The browser never connects to FastAPI or PostgreSQL directly — every
 request passes through server-only code (`frontend/src/lib`, the
 `app/api/backend/[...path]` route handler).
+
+### Review queue and invoice detail (M11B)
+
+- `/review-queue` — server-driven pagination and filters (status,
+  priority, assigned reviewer, batch id — status is scoped to the 4
+  `ReviewCaseStatus` values the backend's filter actually supports; see
+  `docs/m11b_review_queue_detail_report.md` §3). Filter/page state lives
+  in the URL, so a reload or a browser-back from a detail page restores
+  it. A real `<table>` on wider viewports, an accessible card list on
+  narrower ones — the same fields on both, review reasons/status/priority
+  never hidden.
+- `/review-cases/[reviewCaseId]` — reached only from the queue (each row
+  has one explicit "Open review case for ..." link, never a clickable
+  row), with a breadcrumb back to the queue that preserves whatever
+  filters were active. Eight sections: identity/status, normalized
+  fields, evidence references, financial validation, supplier/PO
+  matching, line matches, timeline, and previous review decisions — all
+  read-only, no replay/edit/delete of anything. A missing value is always
+  an explicit "not available" marker, never zero; low and missing
+  confidence are visually distinguished.
+
+See `docs/m11b_review_queue_detail_report.md` for the full milestone
+report, including the backend-contract findings this UI is built against
+and the exact per-fixture acceptance baseline.
 
 ### Local development
 
@@ -515,9 +541,11 @@ npm run api:check        # fail if the generated contract is stale (CI)
 npm run check:build-secrets   # scan .next/static for leaked server-only values
 ```
 
-See `docs/m11a_frontend_foundation_report.md` for the full milestone report
-(architecture, design system, test results, deviations, and readiness for
-M11B).
+See `docs/m11a_frontend_foundation_report.md` for the M11A foundation
+report (architecture, design system, initial test results) and
+`docs/m11b_review_queue_detail_report.md` for the M11B report (review
+queue, invoice detail, the exact per-fixture acceptance baseline, and
+readiness for M11C).
 
 ## Deployment direction
 
@@ -589,6 +617,8 @@ Detailed milestone reports are available in the `docs/` directory:
 - [Phase 7 PostgreSQL memory](docs/m8_phase_7_postgres_memory_report.md)
 - [Phase 8 orchestration](docs/m9_phase_8_orchestration_report.md)
 - [Phase 9 human-review API](docs/m10_phase_9_review_api_report.md)
+- [M11A frontend foundation](docs/m11a_frontend_foundation_report.md)
+- [M11B review queue and invoice detail](docs/m11b_review_queue_detail_report.md)
 
 ## Contributing
 

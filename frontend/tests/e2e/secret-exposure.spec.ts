@@ -107,4 +107,41 @@ test.describe("secret exposure", () => {
 
     expect(errors, `unexpected console errors: ${errors.join("; ")}`).toEqual([]);
   });
+
+  // M11B task §14.
+  test("review queue page source and browser JS state contain no server-only secret values", async ({ page }) => {
+    await page.goto("/review-queue");
+    await expect(page.getByTestId("queue-table")).toBeVisible();
+
+    const html = await page.content();
+    for (const pattern of FORBIDDEN_PATTERNS) {
+      expect(html, `page HTML matched forbidden pattern ${pattern}`).not.toMatch(pattern);
+    }
+  });
+
+  test("review case detail page source contains no server-only secret values or local filesystem paths", async ({ page }) => {
+    await page.goto("/review-cases/cccccccc-0000-4000-8000-000000000003");
+    await expect(page.getByTestId("review-case-detail-body")).toBeVisible();
+
+    const html = await page.content();
+    for (const pattern of FORBIDDEN_PATTERNS) {
+      expect(html, `page HTML matched forbidden pattern ${pattern}`).not.toMatch(pattern);
+    }
+    expect(html).not.toMatch(/\/home\/|\/tmp\//);
+  });
+
+  test("no uncaught browser console errors on a normal review-queue or detail-page load", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(String(error)));
+    page.on("console", (msg) => {
+      if (msg.type() === "error") errors.push(msg.text());
+    });
+
+    await page.goto("/review-queue");
+    await expect(page.getByTestId("queue-table")).toBeVisible();
+    await page.getByRole("link", { name: "Open review case for Template1_Instance90.jpg" }).click();
+    await expect(page.getByTestId("review-case-detail-body")).toBeVisible();
+
+    expect(errors, `unexpected console errors: ${errors.join("; ")}`).toEqual([]);
+  });
 });

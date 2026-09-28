@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Generic, Literal, Optional, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
@@ -51,6 +51,7 @@ from ap_agent.services.review_queries import ReviewQueuePage
 
 __all__ = [
     "ApiEnvelope",
+    "HealthResponse",
     "DashboardResponse",
     "ReviewReasonCount",
     "ReviewQueueItem",
@@ -80,13 +81,47 @@ class _StrictModel(BaseModel):
 # Envelope (notebook cell 108's `ApiEnvelope`, generalized)
 # ------------------------------------------------------------
 
+# M11B task §4: `ApiEnvelope.data` was `Optional[Any]`, so every route's
+# `response_model=ApiEnvelope` produced an OpenAPI schema where `data` was
+# untyped, and `openapi-typescript` could only generate `data?: unknown`
+# for it (M11A's `docs/m11a_frontend_foundation_report.md` §7 -- worked
+# around there with hand-maintained payload types the generator could not
+# catch drift in). `ApiEnvelope` is now generic over its payload type, so
+# each route can declare `response_model=ApiEnvelope[SomeResponse]`
+# instead: FastAPI/Pydantic still serialize exactly the same JSON shape at
+# runtime (constructing `ApiEnvelope[SomeResponse](data=<dict already
+# matching SomeResponse's own fields>, ...)` round-trips through the same
+# validation `SomeResponse(**data)` would), but the OpenAPI schema now
+# `$ref`s the real payload type, so the frontend gets an actually-typed
+# `data` field with no hand-maintained shadow types needed. `T` defaults
+# behaves like `Any` when a route leaves `ApiEnvelope` unparameterized
+# (unchanged behaviour, e.g. `review_commands.py`, out of scope for this
+# milestone's read-only endpoints) -- Python 3.11 predates PEP 696's
+# `TypeVar(..., default=...)`, so this is a plain, unbound `TypeVar`.
+T = TypeVar("T")
 
-class ApiEnvelope(_StrictModel):
+
+class ApiEnvelope(_StrictModel, Generic[T]):
     request_id: UUID
     status: str
-    data: Optional[Any] = None
+    data: Optional[T] = None
     errors: tuple[str, ...] = tuple()
     generated_at: datetime
+
+
+# ------------------------------------------------------------
+# Health (M11B task §4: was an inline dict literal in
+# ap_agent/api/routes/health.py, so it -- like every other route's `data`
+# before this milestone -- had no OpenAPI-visible shape. Same fields,
+# same values, now explicit.)
+# ------------------------------------------------------------
+
+
+class HealthResponse(_StrictModel):
+    service: str
+    api_version: str
+    command_mode: Literal["COMMIT", "VALIDATION_ONLY"]
+    payment_execution: Literal["PROHIBITED"]
 
 
 # ------------------------------------------------------------

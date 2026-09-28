@@ -23,7 +23,7 @@ from ap_agent.services.review_queries import get_invoice_detail, list_review_que
 router = APIRouter(tags=["review-cases"])
 
 
-@router.get("/api/v1/review-cases", response_model=ApiEnvelope)
+@router.get("/api/v1/review-cases", response_model=ApiEnvelope[ReviewQueuePageResponse])
 def get_review_cases(
     actor: AuthenticatedActor,
     repository: ReviewRepository = Depends(get_review_repository),
@@ -34,7 +34,7 @@ def get_review_cases(
     assigned_to: Optional[str] = Query(default=None),
     priority: Optional[ReviewPriority] = Query(default=None),
     batch_id: Optional[UUID] = Query(default=None),
-) -> ApiEnvelope:
+) -> ApiEnvelope[ReviewQueuePageResponse]:
     result_page = list_review_queue(
         repository,
         actor.tenant_id,
@@ -56,12 +56,12 @@ def get_review_cases(
     )
 
 
-@router.get("/api/v1/review-cases/{review_case_id}", response_model=ApiEnvelope)
+@router.get("/api/v1/review-cases/{review_case_id}", response_model=ApiEnvelope[InvoiceDetailResponse])
 def get_review_case_detail(
     actor: AuthenticatedActor,
     review_case_id: UUID = Path(description="Human-review case identifier"),
     repository: ReviewRepository = Depends(get_review_repository),
-) -> ApiEnvelope:
+) -> ApiEnvelope[InvoiceDetailResponse]:
     detail = get_invoice_detail(repository, actor.tenant_id, review_case_id)
 
     return ApiEnvelope(
