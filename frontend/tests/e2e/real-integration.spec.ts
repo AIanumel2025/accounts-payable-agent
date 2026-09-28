@@ -172,10 +172,15 @@ test.describe("real FastAPI + PostgreSQL + Next.js acceptance", () => {
       expect(reviewCaseId, `no seeded review_case_id for fixture "${fixtureKey}"`).toBeTruthy();
 
       await page.goto(`/review-cases/${reviewCaseId}`);
-      await expect(page.getByTestId("review-case-detail-body")).toBeVisible({ timeout: 30_000 });
+      const detailBody = page.getByTestId("review-case-detail-body");
+      await expect(detailBody).toBeVisible({ timeout: 30_000 });
 
-      // Section A: identity.
-      await expect(page.getByText(expected.sourceName)).toBeVisible();
+      // Section A: identity. Scoped to the detail body -- when invoice_number
+      // is null (Template1), the source filename is also the breadcrumb's
+      // current-page text and the <h1> (both outside the detail body), so an
+      // unscoped getByText(sourceName) hits Playwright's strict-mode
+      // multiple-match error.
+      await expect(detailBody.getByText(expected.sourceName)).toBeVisible();
 
       // Section B: normalized fields -- exact row count.
       const fieldsRows = page.locator('[aria-label="Normalized invoice fields, scrollable"] tbody tr');
