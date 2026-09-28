@@ -1,0 +1,17 @@
+.sidebar {
+  display: none;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  padding: var(--space-5) var(--space-4);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  min-height: 100vh;
+}
+
+@media (min-width: 768px) {
+  .sidebar {
+    display: flex;
+  }
+}

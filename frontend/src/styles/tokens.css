@@ -1,0 +1,190 @@
+/**
+ * Design tokens for the Accounts Payable Agent review interface (M11A
+ * task §7). A restrained, high-contrast, slate/graphite finance-operations
+ * palette -- calm rather than decorative, built for long periods of
+ * invoice review. No bright marketing gradients, no glassmorphism, no
+ * decorative charts. Status is always paired with text/an icon, never
+ * color alone (task §7/§12).
+ *
+ * Fonts are a bundled system-font stack only -- no runtime web-font
+ * download (task §17).
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Canvas / surfaces */
+  --color-canvas: #14181f;
+  --color-surface: #1b212b;
+  --color-surface-raised: #212836;
+  --color-border: #333c4d;
+  --color-border-strong: #47536a;
+
+  /* Text */
+  --color-text-primary: #eef1f6;
+  --color-text-secondary: #a7b1c2;
+  /* 6.38:1 against --color-surface (#1b212b) -- WCAG AA requires 4.5:1 for
+     normal text; the original #78849b measured only 4.28:1 at the small
+     label size used in status indicators (task §12, verified with axe-core). */
+  --color-text-tertiary: #99a3b8;
+  --color-text-on-accent: #0b0e13;
+
+  /* Accent + semantic status colors (each also carries an icon/label in markup) */
+  --color-accent: #5b9dd9;
+  --color-accent-strong: #7ab3e8;
+
+  --color-success: #4caf7d;
+  --color-success-surface: #16261f;
+  --color-success-border: #2e5c44;
+
+  --color-warning: #d9a441;
+  --color-warning-surface: #2a2113;
+  --color-warning-border: #6b5323;
+
+  --color-review-required: #c98a3f;
+  --color-review-required-surface: #2a2013;
+  --color-review-required-border: #6b4f24;
+
+  --color-failed: #de6b6b;
+  --color-failed-surface: #2b1717;
+  --color-failed-border: #6b2e2e;
+
+  --color-focus: #7ab3e8;
+
+  /* Spacing scale (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* Shadow (subtle, operational -- not decorative) */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+
+  /* Typography */
+  --font-family-base:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-family-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.8125rem;
+  --font-size-base: 0.9375rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.5rem;
+  --font-size-2xl: 1.875rem;
+
+  --line-height-tight: 1.25;
+  --line-height-base: 1.5;
+
+  --sidebar-width: 15.5rem;
+}
+
+/* A light theme is defined for completeness/contrast testing, but the
+   product defaults to the dark, graphite operational theme above -- most
+   finance-operations review work happens in low-glare environments. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-canvas: #f3f4f7;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-border: #d7dbe3;
+  --color-border-strong: #b7bfcc;
+  --color-text-primary: #171b22;
+  --color-text-secondary: #454e5e;
+  --color-text-tertiary: #626c7e;
+  --color-text-on-accent: #ffffff;
+  --color-accent: #1f5f9c;
+  --color-accent-strong: #17497a;
+  --color-success: #1f7a4d;
+  --color-success-surface: #e6f3ea;
+  --color-success-border: #a9d3b8;
+  --color-warning: #8a6100;
+  --color-warning-surface: #fbf0d6;
+  --color-warning-border: #e0c079;
+  --color-review-required: #8a5100;
+  --color-review-required-surface: #fbecd6;
+  --color-review-required-border: #e0ab79;
+  --color-failed: #a62525;
+  --color-failed-surface: #fbe1e1;
+  --color-failed-border: #e0a1a1;
+  --color-focus: #17497a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--color-accent-strong);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-strong);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+}
+
+.skip-link:focus {
+  left: var(--space-4);
+  top: var(--space-4);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

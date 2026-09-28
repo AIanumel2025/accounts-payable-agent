@@ -1,0 +1,50 @@
+.card {
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  border-left-width: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.label {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.value {
+  margin: 0;
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.description {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.neutral {
+  border-left-color: var(--color-border-strong);
+}
+
+.success {
+  border-left-color: var(--color-success);
+}
+
+.warning {
+  border-left-color: var(--color-warning);
+}
+
+.review-required {
+  border-left-color: var(--color-review-required);
+}
+
+.failed {
+  border-left-color: var(--color-failed);
+}
