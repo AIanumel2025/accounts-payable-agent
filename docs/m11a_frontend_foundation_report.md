@@ -633,8 +633,8 @@ This is exactly the kind of real, only-a-live-database-run-could-surface
 defect this milestone's own instructions anticipated (mirroring M10's own
 CI-round history, `docs/m10_phase_9_review_api_report.md` §13.3) — not a
 false start from mocking a result. Pushed as commit
-`<filled in after push>`; next CI round's result recorded below once
-observed.
+`d7116ed796604490439d836f155ca9fa13d37b75`; next CI round's result
+recorded below once observed.
 
 ## 22. Blockers
 
