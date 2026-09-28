@@ -316,45 +316,95 @@ the whole suite serially (`workers: 1`) — the suite is small enough
 
 ### 12.3 Real FastAPI + PostgreSQL + Next.js integration (task §15)
 
-**Mechanically verified in this sandbox; the true acceptance assertions
-require a CI run.** This sandbox's outbound-HTTPS proxy explicitly does
-not support raw-TCP database connections
+**First CI run: real failure, real fix (not mocked around).** The first
+`real-integration` job run reached the real `ap_agent_m8_test` database
+successfully (FastAPI's `/health` and `/api/v1/dashboard` both returned
+`200`) but failed both assertions: `getByLabel('Total invoices: 4')`
+never appeared, because the dashboard genuinely showed zero for every
+metric. Root cause: `scripts/run-real-integration.mjs` pointed Next.js at
+`AP_AGENT_DEV_TENANT_ID=00000000-0000-0000-0000-000000000000` (the
+`.env.example` placeholder) with nothing ever seeded for that tenant in
+the real database — the dashboard was correctly reporting an empty tenant,
+not misbehaving. Fixed by making the orchestration script responsible for
+its own data, not just its own process lifecycle:
+
+1. **`tests/support/review_fixtures.py`** gained one new, purely-additive
+   function, `seed_completed_invoice` (the existing `seed_review_case` was
+   not touched) — an automatically-completed (`SUCCEEDED`,
+   `review_required=False`, no review case) invoice, mirroring what a real
+   Phase 1-8 run leaves behind when nothing needs review.
+2. **`scripts/manage_m11a_acceptance_tenant.py`** (new, repo root) has two
+   subcommands:
+   - `seed --output <path>`: creates (idempotently) a dedicated
+     least-privilege PostgreSQL role
+     (`ap_agent_m11a_acceptance_runtime` — `NOSUPERUSER NOBYPASSRLS
+     NOCREATEDB NOCREATEROLE`, via `ap_agent.db.roles.create_least_privilege_role`,
+     the exact same mechanism M8/M9/M10's own `requires_postgres` suites
+     already use, never a bespoke one), registers a **brand-new tenant
+     (`uuid.uuid4()`, generated fresh every run — never hardcoded, never
+     reused)**, and seeds exactly the controlled-fixture baseline: 1
+     completed invoice + 3 review-required invoices/cases with review
+     reasons distributed so the dashboard reads
+     `INHERITED_FINANCIAL_VALIDATION_REVIEW=3`, `SUPPLIER_NAME_MISSING=2`,
+     `INVOICE_LINE_TOTAL_MISSING=1` — the exact task-brief numbers, never
+     zeroed or altered. Writes `{tenant_id, runtime_dsn}` as JSON to a
+     0600 file (never stdout/logs); only the tenant id itself (a random
+     UUID, not a secret) is printed.
+   - `cleanup --tenant-id <uuid>`: deletes every row that tenant can
+     still legally lose — see the architectural limit below.
+3. **`scripts/run-real-integration.mjs`** now: seeds the tenant *before*
+   starting anything (step 0), starts **FastAPI as the generated
+   least-privilege role's DSN** (`AP_AGENT_POSTGRES_DSN=<runtime_dsn>`,
+   never the test DSN's own migration-owner role), starts **Next.js with
+   the generated tenant id** (`AP_AGENT_DEV_TENANT_ID=<tenant_id>`, never
+   the placeholder), and in its `finally` block — after stopping Next.js
+   and FastAPI — runs `cleanup --tenant-id <tenant_id>` for that run's own
+   tenant only.
+
+**A genuine architectural limit found while implementing cleanup, not
+worked around:** `ap_agent.invoice_memory_records` carries a `BEFORE
+UPDATE OR DELETE` trigger (`reject_append_only_mutation()`,
+`0003_matched_invoice_memory.sql`) that unconditionally rejects mutation
+for *any* role, including the table owner — this is deliberate,
+documented M8 behaviour ("original normalized invoice memory is
+immutable"), not a bug. `ap_agent.workflow_instances` and
+`ap_agent.tenants` are each referenced by an `ON DELETE RESTRICT` foreign
+key from that same append-only table, so once a run's invoice-memory rows
+exist, its workflow and tenant rows become permanently undeletable too —
+by the schema's own design, for every tenant, test or production, forever.
+`cleanup` therefore deletes only `ap_agent.review_cases` (the one table
+with no append-only trigger and no incoming `RESTRICT` FK) and explicitly
+does not attempt the rest; each acceptance run leaves a small, permanent,
+harmlessly tenant-isolated audit trail behind, which is correct behaviour
+for an audit-grade system, not a cleanup failure. This is documented in
+the script's own module docstring, not hidden.
+
+**Verified in this sandbox (mechanics only — see below for why not the
+real assertions):** a dry run against a syntactically valid but
+unreachable DSN confirms the new seed step fails fast, *before* FastAPI or
+Next.js ever starts (no wasted work, no orphaned process — verified with
+`ps aux`), with a clean non-zero exit code and zero occurrences of the
+DSN string anywhere in its output. This sandbox's outbound-HTTPS proxy
+still does not support raw-TCP database connections
 (`/root/.ccr/README.md`: "Not supported through the proxy ... raw-TCP
 databases") — the identical, already-documented limitation M8/M9/M10 all
-hit (`docs/m10_phase_9_review_api_report.md` §13.2).
-
-What *was* verified here, with a deliberately invalid DSN
-(`scripts/run-real-integration.mjs` dry run):
-
-- The DSN is mapped into the FastAPI child process's environment only
-  (`AP_AGENT_POSTGRES_DSN`), never printed, never written to a file, never
-  passed to the Next.js process.
-- FastAPI starts cleanly and `/health` returns `200` without touching
-  PostgreSQL (matching `ap_agent/api/routes/health.py`'s own design).
-- Next.js starts cleanly against the real FastAPI process.
-- `GET /api/v1/dashboard` correctly reaches the real `psycopg` connection
-  attempt and fails with the expected `503 DATABASE_UNAVAILABLE` once a
-  genuinely bad DSN is dialed — proving the wiring is real, not stubbed.
-- The Playwright real-integration spec launches a real browser and
-  correctly times out waiting for `dashboard-body` (since no real data can
-  load), rather than erroring on infrastructure.
-- Cleanup is fully graceful: `INFO: Shutting down` / `Application shutdown
-  complete` from uvicorn, no orphaned Next.js or FastAPI process left
-  behind (verified with `ps aux` after the run) — this needed a fix: the
-  first version of the script left an orphaned `next-server` behind when
-  its parent `node` process was killed by an external `timeout`, because
-  npm does not reliably forward signals to the process it execs. Fixed by
-  spawning each child in its own process group (`detached: true`) and
-  signaling the group (`process.kill(-pid, ...)`, not just the direct
-  child.
+hit (`docs/m10_phase_9_review_api_report.md` §13.2) — so the seed step
+cannot actually reach `ap_agent_m8_test` from here; its logic was verified
+by code review, by reusing M8/M9/M10's own already-CI-proven seeding
+primitives (`create_least_privilege_role`, `seed_review_case`,
+`PostgresMemoryRepository`) rather than new, unproven SQL, and by the
+existing `tests/api`/`tests/integration/test_review_postgres_integration.py`
+suites (which exercise the very same fixtures module) continuing to
+collect and pass unaffected (115 M10 Phase 9 unit tests, unchanged) after
+this file's addition.
 
 **Per this milestone's own instruction, this result is not mocked or
 substituted.** The real assertions (exact controlled-fixture metrics,
 review-reason analytics, backend-health, zero console errors, an
-accessibility scan, and "no PostgreSQL mutation occurred") run via the new
+accessibility scan, and "no PostgreSQL mutation occurred") run via
 `.github/workflows/m11a-frontend.yml`'s `real-integration` job, using the
-repository's `AP_AGENT_TEST_POSTGRES_DSN` secret, once this branch's PR
-triggers CI.
+repository's `AP_AGENT_TEST_POSTGRES_DSN` secret. See §21 for this
+correction's actual CI result.
 
 ## 13. Secret-exposure result (task §16)
 
@@ -495,39 +545,87 @@ branch's PR is opened. Its result will be visible on the PR itself.
 7. **Playwright suite runs with `workers: 1`** (not the default parallel
    execution) because every spec shares one mock backend process's mutable
    state; documented in §12.2 as a real flake this caused and fixed.
+8. **`cleanup` cannot delete every row it seeds** — `workflow_instances`/
+   `invoice_memory_records`/`tenants` rows become permanently undeletable
+   the moment they exist, by the schema's own append-only trigger plus
+   `ON DELETE RESTRICT` foreign keys (§12.3/§21). Only `review_cases` rows
+   are actually removed; this is a real, documented architectural limit,
+   not an oversight.
 
 ## 20. Commit and pull request
 
 - Commit: `9f8342e06efe1d86ba526728d71911142212b1b4` ("M11A: human-review
   frontend foundation").
+- Correction commit: see §21.
 - Pull request: [AIanumel2025/accounts-payable-agent#11](https://github.com/AIanumel2025/accounts-payable-agent/pull/11)
   (`claude/elegant-goodall-1kwu0o` → `main`), left open and unmerged.
 
-## 21. Blockers
+## 21. Correction: isolated-tenant seeding for the real-integration run
 
-None blocking a merge review. The one open item — a genuine, green
-`real-integration` CI run against the real `ap_agent_m8_test` database —
-is expected to complete automatically once this branch's PR triggers
-GitHub Actions, exactly as it did for M8/M9/M10.
+The PR's first `real-integration` CI run (workflow run `36460085491`,
+commit `55f9c6e`) reached the real database and failed both assertions
+because the dashboard was genuinely empty for the all-zero placeholder
+tenant `scripts/run-real-integration.mjs` pointed Next.js at — nothing had
+ever been seeded for it. Full root cause, fix, and the append-only
+architectural limit found while implementing cleanup: §12.3.
 
-## 22. Readiness for M11B
+Summary of what changed:
+
+- `tests/support/review_fixtures.py`: added `seed_completed_invoice`
+  (purely additive; `seed_review_case` unchanged).
+- `scripts/manage_m11a_acceptance_tenant.py` (new): `seed`/`cleanup`
+  subcommands — fresh tenant UUID every run, dedicated least-privilege
+  PostgreSQL role, the exact controlled-fixture baseline, DSN/password
+  never printed.
+- `scripts/run-real-integration.mjs`: seeds before starting anything,
+  runs FastAPI as the generated least-privilege role, runs Next.js with
+  the generated tenant id, cleans up that tenant's removable rows in its
+  `finally` block.
+
+Verified before pushing: the updated `tests/support/review_fixtures.py`
+imports cleanly and the existing `tests/api`/
+`tests/integration/test_review_postgres_integration.py` suites (43 tests)
+still collect without error; the M10 Phase 9 unit suite (115 tests, no
+database needed) still passes unchanged; the new script's fail-closed DSN
+gate (missing variable, wrong database name) and its real-connection code
+path were exercised directly; a full dry run of the updated orchestration
+script against a syntactically valid but unreachable DSN confirms seeding
+fails fast, before FastAPI or Next.js ever start, with zero orphaned
+processes and zero occurrences of the DSN in any output. The real
+assertions against `ap_agent_m8_test` could not be exercised in this
+sandbox for the same raw-TCP-database reason as before (§12.3) — this
+correction's actual CI result is recorded here once it lands:
+
+- Correction commit: `<filled in after push — see the PR for the current head>`.
+- CI run: `<filled in once observed>`.
+
+## 22. Blockers
+
+None blocking a merge review beyond the one open item this correction
+addresses: a genuine, green `real-integration` CI run against the real
+`ap_agent_m8_test` database, now seeded with an isolated tenant per run
+rather than reading an empty placeholder one. See §21 for this
+correction's actual CI result once observed.
+
+## 23. Readiness for M11B
 
 **Yes.** The API-contract generation pipeline, server-side boundary,
 design system, application shell, and test infrastructure (unit,
-component, mocked e2e, and a working real-integration harness) are all in
-place and exercised. M11B can add the review-queue and invoice-detail
-pages, and eventually review-command writes, directly on top of this
-foundation without re-deriving any of it.
+component, mocked e2e, and a working real-integration harness, now with
+real per-run data seeding) are all in place and exercised. M11B can add
+the review-queue and invoice-detail pages, and eventually review-command
+writes, directly on top of this foundation without re-deriving any of it.
 
-## 23. Safe to merge?
+## 24. Safe to merge?
 
-**Yes, pending the repository owner's/reviewers' own approval and a
-green `real-integration` CI run against the real database** (§21) — every
-requirement this sandbox could execute is green: lint, typecheck, contract
-drift check, 71 unit/component tests, production build, 32 Playwright
-browser tests (including a zero-serious/critical accessibility scan and a
-zero-match secret-exposure scan), and responsive/visual review across four
-breakpoints and the error state. No open review threads;
-`mergeable_state` should be clean against the current `main` (this branch
-started from `main`'s own head commit with no divergence). The PR is left
-open and unmerged per this milestone's instructions.
+**Yes, pending the repository owner's/reviewers' own approval and
+confirmation of a green `real-integration` CI run against the real
+database on the corrected commit** (§21/§22) — every requirement this
+sandbox could execute is green: lint, typecheck, contract drift check, 71
+unit/component tests, production build, 32 Playwright browser tests
+(including a zero-serious/critical accessibility scan and a zero-match
+secret-exposure scan), and responsive/visual review across four
+breakpoints and the error state. No open review threads; `mergeable_state`
+should be clean against the current `main` (this branch started from
+`main`'s own head commit with no divergence). The PR is left open and
+unmerged per this milestone's instructions.

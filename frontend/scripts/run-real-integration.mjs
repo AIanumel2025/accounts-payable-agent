@@ -2,22 +2,32 @@
 // Real FastAPI + PostgreSQL + Next.js acceptance run (M11A task §15).
 //
 // Orchestrates the exact sequence the task brief specifies:
-//   1. start FastAPI on 127.0.0.1 using an available port
+//   0. seed a fresh, isolated acceptance tenant with the controlled-
+//      fixture baseline (scripts/manage_m11a_acceptance_tenant.py) --
+//      added after the first CI run of this script failed: it pointed
+//      Next.js at the all-zero placeholder tenant UUID with nothing
+//      seeded for it, so the real database correctly reported an empty
+//      dashboard. See that script's module docstring for the full story.
+//   1. start FastAPI on 127.0.0.1 using an available port, running as
+//      the freshly created least-privilege database role -- never the
+//      DSN's own migration-owner role
 //   2. wait for /health
-//   3. start Next.js on 127.0.0.1 using an available port
+//   3. start Next.js on 127.0.0.1 using an available port, with the
+//      generated tenant id (never a hardcoded/persistent one)
 //   4. wait for the dashboard
 //   5. open the dashboard in Playwright
 //   6-10. verified by tests/e2e/real-integration.spec.ts
-//   11. stop both servers cleanly
+//   11. stop both servers cleanly, then clean up the acceptance tenant's
+//       own removable rows (never anyone else's data)
 //
 // The real PostgreSQL test DSN (`AP_AGENT_TEST_POSTGRES_DSN`) is read from
-// this process's own environment and mapped into the FastAPI child
-// process's environment ONLY, as `AP_AGENT_POSTGRES_DSN` (the variable
-// `ap_agent.db.connection.load_dsn` reads) -- it is never logged, never
-// echoed, never written to a file (not even a committed `.env`), and never
-// passed to the Next.js process (which must never hold a database
-// credential at all: the browser-Next-FastAPI-Postgres boundary means only
-// the FastAPI process ever sees this DSN).
+// this process's own environment and handed only to
+// `scripts/manage_m11a_acceptance_tenant.py` (as that Python process's own
+// environment variable, never as a CLI argument, so it never appears in
+// `ps`) -- it is never logged, never echoed, never written to a file, and
+// never reaches the Next.js process or this script's own stdout/stderr.
+// FastAPI itself is started with a *different*, least-privilege, per-run
+// DSN that script generates -- not the owner test DSN.
 //
 // This script cannot run in a sandbox whose network egress does not permit
 // raw-TCP PostgreSQL connections -- see docs/m11a_frontend_foundation_report.md,
@@ -26,12 +36,16 @@
 // limitation (docs/m10_phase_9_review_api_report.md §13.2).
 
 import { spawn } from "node:child_process";
+import { readFileSync, rmSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const FRONTEND_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = path.dirname(FRONTEND_ROOT);
+const PYTHON_BIN = process.env.AP_AGENT_PYTHON_BIN ?? "python3";
+const MANAGE_TENANT_SCRIPT = path.join(REPO_ROOT, "scripts", "manage_m11a_acceptance_tenant.py");
 
 function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -92,6 +106,76 @@ async function stopProcess(child, name) {
   }
 }
 
+/** Runs a short-lived, one-shot command to completion and resolves its exit code (never throws for a non-zero exit). */
+function runOnceAndWait(command, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: "inherit", ...options });
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code ?? 1));
+  });
+}
+
+/**
+ * Seeds a fresh, isolated acceptance tenant with the exact controlled-
+ * fixture baseline (`scripts/manage_m11a_acceptance_tenant.py seed`).
+ * Returns `{ tenantId, runtimeDsn }`. `runtimeDsn` is a least-privilege
+ * role's DSN, generated fresh per run -- FastAPI runs as this role, never
+ * as the test DSN's own migration-owner role.
+ */
+async function seedAcceptanceTenant(testDsn) {
+  const workDir = mkdtempSync(path.join(tmpdir(), "ap-agent-m11a-acceptance-"));
+  const outputPath = path.join(workDir, "acceptance-tenant.json");
+
+  try {
+    console.log("Seeding an isolated M11A acceptance tenant with the controlled-fixture baseline...");
+    const exitCode = await runOnceAndWait(
+      PYTHON_BIN,
+      [MANAGE_TENANT_SCRIPT, "seed", "--output", outputPath],
+      {
+        cwd: REPO_ROOT,
+        env: { ...process.env, AP_AGENT_TEST_POSTGRES_DSN: testDsn },
+      },
+    );
+
+    if (exitCode !== 0) {
+      throw new Error(`Seeding the M11A acceptance tenant failed (exit code ${exitCode}). See the log above.`);
+    }
+
+    const parsed = JSON.parse(readFileSync(outputPath, "utf-8"));
+    if (!parsed.tenant_id || !parsed.runtime_dsn) {
+      throw new Error("Seeding script's output file did not contain both tenant_id and runtime_dsn.");
+    }
+
+    return { tenantId: parsed.tenant_id, runtimeDsn: parsed.runtime_dsn };
+  } finally {
+    // The output file holds a live database credential (the least-
+    // privilege role's password, embedded in runtime_dsn) -- delete the
+    // whole scratch directory the instant it has been read, successfully
+    // or not.
+    rmSync(workDir, { recursive: true, force: true });
+  }
+}
+
+/** Deletes the acceptance tenant's own removable rows (never anyone else's data). See that script's module docstring for exactly what can and cannot be deleted, and why. */
+async function cleanupAcceptanceTenant(testDsn, tenantId) {
+  console.log(`Cleaning up M11A acceptance tenant ${tenantId}...`);
+  const exitCode = await runOnceAndWait(
+    PYTHON_BIN,
+    [MANAGE_TENANT_SCRIPT, "cleanup", "--tenant-id", tenantId],
+    {
+      cwd: REPO_ROOT,
+      env: { ...process.env, AP_AGENT_TEST_POSTGRES_DSN: testDsn },
+    },
+  );
+  if (exitCode !== 0) {
+    console.warn(
+      `Cleanup for acceptance tenant ${tenantId} exited with code ${exitCode}. This does not fail the ` +
+        "acceptance run itself -- the tenant's data is isolated and harmless either way -- but investigate " +
+        "if it keeps happening.",
+    );
+  }
+}
+
 async function main() {
   const testDsn = process.env.AP_AGENT_TEST_POSTGRES_DSN;
   if (!testDsn || testDsn.trim() === "") {
@@ -103,20 +187,21 @@ async function main() {
     return;
   }
 
+  const { tenantId, runtimeDsn } = await seedAcceptanceTenant(testDsn);
+  console.log(`Acceptance tenant ${tenantId} seeded. FastAPI will run as its dedicated least-privilege role.`);
+
   const fastapiPort = await findFreePort();
   const nextPort = await findFreePort();
 
-  const pythonBin = process.env.AP_AGENT_PYTHON_BIN ?? "python3";
-
-  console.log(`Starting FastAPI on 127.0.0.1:${fastapiPort} (DSN mapped into its environment only, never printed)`);
+  console.log(`Starting FastAPI on 127.0.0.1:${fastapiPort} (least-privilege runtime DSN, never printed)`);
   const fastapiProcess = spawnProcess(
-    pythonBin,
+    PYTHON_BIN,
     ["-m", "uvicorn", "ap_agent.api.app:create_app", "--factory", "--host", "127.0.0.1", "--port", String(fastapiPort)],
     {
       cwd: REPO_ROOT,
       env: {
         ...process.env,
-        AP_AGENT_POSTGRES_DSN: testDsn,
+        AP_AGENT_POSTGRES_DSN: runtimeDsn,
         PYTHONPATH: path.join(REPO_ROOT, "src"),
       },
     },
@@ -135,11 +220,10 @@ async function main() {
         ...process.env,
         AP_AGENT_API_BASE_URL: `http://127.0.0.1:${fastapiPort}`,
         AP_AGENT_FRONTEND_AUTH_MODE: "development_headers",
-        // A real tenant scoped to the controlled fixtures is required for
-        // the acceptance numbers to match; CI supplies this via its own
-        // environment/secret rather than a hardcoded value here (M11A task
-        // §5/§21: never hardcode a real tenant id in a committed file).
-        AP_AGENT_DEV_TENANT_ID: process.env.AP_AGENT_ACCEPTANCE_TENANT_ID ?? "00000000-0000-0000-0000-000000000000",
+        // The tenant this run just seeded -- generated fresh every run,
+        // never a hardcoded/persistent value (M11A task §5/§21: never
+        // hardcode a real tenant id in a committed file).
+        AP_AGENT_DEV_TENANT_ID: tenantId,
         AP_AGENT_DEV_ACTOR_ID: "real-integration-acceptance",
         AP_AGENT_DEV_ACTOR_ROLE: "READ_ONLY_AUDITOR",
       },
@@ -169,6 +253,7 @@ async function main() {
     console.log("Stopping Next.js and FastAPI...");
     await stopProcess(nextProcess, "Next.js");
     await stopProcess(fastapiProcess, "FastAPI");
+    await cleanupAcceptanceTenant(testDsn, tenantId);
   }
 }
 
