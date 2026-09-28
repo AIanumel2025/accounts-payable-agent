@@ -596,7 +596,8 @@ assertions against `ap_agent_m8_test` could not be exercised in this
 sandbox for the same raw-TCP-database reason as before (§12.3) — this
 correction's actual CI result is recorded here once it lands:
 
-- Correction commit: `<filled in after push — see the PR for the current head>`.
+- Correction commit: `8e9d683ceaae7a81c0c5911d8e506bf58a19b9fa` ("Fix
+  real-integration acceptance: seed an isolated tenant per run").
 - CI run: `<filled in once observed>`.
 
 ## 22. Blockers
