@@ -496,14 +496,21 @@ branch's PR is opened. Its result will be visible on the PR itself.
    execution) because every spec shares one mock backend process's mutable
    state; documented in §12.2 as a real flake this caused and fixed.
 
-## 20. Blockers
+## 20. Commit and pull request
+
+- Commit: `9f8342e06efe1d86ba526728d71911142212b1b4` ("M11A: human-review
+  frontend foundation").
+- Pull request: [AIanumel2025/accounts-payable-agent#11](https://github.com/AIanumel2025/accounts-payable-agent/pull/11)
+  (`claude/elegant-goodall-1kwu0o` → `main`), left open and unmerged.
+
+## 21. Blockers
 
 None blocking a merge review. The one open item — a genuine, green
 `real-integration` CI run against the real `ap_agent_m8_test` database —
 is expected to complete automatically once this branch's PR triggers
 GitHub Actions, exactly as it did for M8/M9/M10.
 
-## 21. Readiness for M11B
+## 22. Readiness for M11B
 
 **Yes.** The API-contract generation pipeline, server-side boundary,
 design system, application shell, and test infrastructure (unit,
@@ -511,3 +518,16 @@ component, mocked e2e, and a working real-integration harness) are all in
 place and exercised. M11B can add the review-queue and invoice-detail
 pages, and eventually review-command writes, directly on top of this
 foundation without re-deriving any of it.
+
+## 23. Safe to merge?
+
+**Yes, pending the repository owner's/reviewers' own approval and a
+green `real-integration` CI run against the real database** (§21) — every
+requirement this sandbox could execute is green: lint, typecheck, contract
+drift check, 71 unit/component tests, production build, 32 Playwright
+browser tests (including a zero-serious/critical accessibility scan and a
+zero-match secret-exposure scan), and responsive/visual review across four
+breakpoints and the error state. No open review threads;
+`mergeable_state` should be clean against the current `main` (this branch
+started from `main`'s own head commit with no divergence). The PR is left
+open and unmerged per this milestone's instructions.
