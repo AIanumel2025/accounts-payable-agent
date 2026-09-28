@@ -1,0 +1,22 @@
+# Next.js
+/.next/
+/out/
+
+# Dependencies
+/node_modules/
+
+# Local env
+.env.local
+.env*.local
+
+# Testing
+/coverage/
+/playwright-report/
+/playwright-report-integration/
+/test-results/
+/blob-report/
+
+# Misc
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store

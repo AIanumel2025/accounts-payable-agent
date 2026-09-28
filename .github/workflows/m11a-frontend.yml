@@ -1,0 +1,167 @@
+name: M11A frontend foundation
+
+# Dedicated to the M11A human-review frontend (task brief §18). Runs only
+# when frontend code or the API contract it is generated from could have
+# changed -- never on a documentation-only or unrelated backend-only
+# commit, so a docs-only follow-up never triggers this job (and never the
+# separate, much longer M8/M9/M10 PaddleOCR/PostgreSQL acceptance workflow,
+# which this file does not touch).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "frontend/**"
+      - "scripts/export_openapi_schema.py"
+      - "src/ap_agent/api/**"
+      - "src/ap_agent/models/interface.py"
+      - "src/ap_agent/models/orchestration.py"
+      - "src/ap_agent/models/memory.py"
+      - "src/ap_agent/services/review_queries.py"
+      - "pyproject.toml"
+      - ".github/workflows/m11a-frontend.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m11a-frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python (for OpenAPI schema export -- no live backend needed)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install ap_agent (api extra only -- schema export needs no PostgreSQL driver)
+        working-directory: .
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[api]"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Check OpenAPI contract is up to date (no drift)
+        run: npm run api:check
+
+      - name: Unit and component tests
+        run: npm run test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser acceptance tests (mocked backend, no PostgreSQL)
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 14
+
+      - name: Check built static assets for server-only secrets
+        run: node scripts/check-build-secrets.mjs
+
+  real-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build-and-test
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Verify PostgreSQL DSN secret is configured
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+        run: |
+          if [ -z "${AP_AGENT_TEST_POSTGRES_DSN}" ]; then
+            echo "::error::AP_AGENT_TEST_POSTGRES_DSN secret is not configured or is empty."
+            exit 1
+          fi
+
+      - name: Install ap_agent (api + postgres extras)
+        working-directory: .
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[api,postgres]"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Production build
+        run: npm run build
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # M11A task §15: the real FastAPI + PostgreSQL (ap_agent_m8_test) +
+      # Next.js acceptance path. `AP_AGENT_TEST_POSTGRES_DSN` is mapped into
+      # the FastAPI child process's own environment by the script itself,
+      # never echoed and never written to a file (task §15/§16).
+      - name: Run real FastAPI + PostgreSQL + Next.js acceptance
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+        run: npm run test:e2e:integration
+
+      - name: Upload real-integration Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-integration
+          path: frontend/playwright-report-integration/
+          retention-days: 14

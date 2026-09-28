@@ -17,12 +17,18 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 from ap_agent.config.postgres import MemoryConfig
 from ap_agent.db.connection import open_connection, set_tenant_context
-from ap_agent.models.memory import MemoryWorkflowStage, MemoryWorkflowStatus, WorkflowMemoryRecord
+from ap_agent.models.memory import (
+    MatchedInvoiceMemoryRecord,
+    MemoryWorkflowStage,
+    MemoryWorkflowStatus,
+    WorkflowMemoryRecord,
+)
 from ap_agent.repositories.postgres_memory_repository import PostgresMemoryRepository
 from ap_agent.serialization.memory_json import canonical_payload_sha256
 
@@ -229,4 +235,189 @@ def seed_review_case(
         document_id=document_id,
         review_case_id=review_case_id,
         review_reasons=review_reasons,
+    )
+
+
+# ------------------------------------------------------------
+# Automatically-completed invoice (no review required) -- added for the
+# M11A real-integration acceptance baseline
+# (docs/m11a_frontend_foundation_report.md, "Real FastAPI/PostgreSQL
+# integration result"), which needs one invoice that resolved without
+# review alongside the three review-required ones `seed_review_case`
+# already covers. Purely additive: does not change `seed_review_case` or
+# any existing caller.
+# ------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SeededCompletedInvoice:
+    tenant_id: uuid.UUID
+    workflow_id: uuid.UUID
+    batch_id: uuid.UUID
+    document_id: uuid.UUID
+
+
+def _completed_normalized_invoice_payload(document_id: uuid.UUID, *, po_number: str = "88") -> dict[str, Any]:
+    return {
+        "document_id": str(document_id),
+        "invoice_record": {
+            "fields": [
+                {
+                    "field_name": "PURCHASE_ORDER_NUMBER",
+                    "raw_value": po_number,
+                    "normalized_value": po_number,
+                    "value_type": "TEXT",
+                    "confidence": 0.98,
+                    "review_required": False,
+                    "evidence_references": [{"reference_id": "ev-po-1"}],
+                },
+                {
+                    "field_name": "SUPPLIER_NAME",
+                    "raw_value": "Acme Supplies Ltd",
+                    "normalized_value": "ACME SUPPLIES LTD",
+                    "value_type": "TEXT",
+                    "confidence": 0.97,
+                    "review_required": False,
+                    "evidence_references": [{"reference_id": "ev-supplier-1"}],
+                },
+            ],
+            "line_items": [
+                {"line_number": 1, "description": "Widget", "quantity": "5", "unit_price": "1.00"},
+            ],
+        },
+    }
+
+
+def _completed_financial_validation_payload(document_id: uuid.UUID) -> dict[str, Any]:
+    return {
+        "document_id": str(document_id),
+        "checks": [
+            {
+                "check_id": "check-1",
+                "check_type": "TOTAL_RECONCILIATION",
+                "status": "PASSED",
+                "message": "Total reconciles.",
+                "expected_value": "5.00",
+                "observed_value": "5.00",
+                "operands": [{"evidence_reference_ids": ["ev-po-1"]}],
+            },
+        ],
+    }
+
+
+def _completed_matching_result_payload(document_id: uuid.UUID) -> dict[str, Any]:
+    return {
+        "document_id": str(document_id),
+        "line_matches": [
+            {
+                "line_match_id": "line-match-1",
+                "invoice_line_number": 1,
+                "purchase_order_line_number": 1,
+                "description_status": "MATCHED",
+                "quantity_status": "MATCHED",
+                "unit_price_status": "MATCHED",
+                "line_total_status": "MATCHED",
+                "review_required": False,
+                "review_reasons": [],
+            },
+        ],
+    }
+
+
+def seed_completed_invoice(
+    dsn: str,
+    config: MemoryConfig,
+    *,
+    tenant_id: uuid.UUID,
+    source_name: str = "seeded-completed-invoice.pdf",
+) -> SeededCompletedInvoice:
+    """Seed one automatically-completed invoice for `tenant_id`: a
+    `SUCCEEDED` workflow with `review_required=False` and a matching
+    invoice-memory record, and (unlike `seed_review_case`) no review case
+    at all -- mirrors what a real Phase 1-8 run leaves behind when nothing
+    needs human review. The caller must have already registered the
+    tenant.
+    """
+
+    repository = PostgresMemoryRepository(dsn, config)
+
+    document_id = uuid.uuid4()
+    batch_id = uuid.uuid4()
+    workflow_id = uuid.uuid4()
+
+    workflow_record = repository.create_or_get_workflow(
+        tenant_id=tenant_id,
+        record=WorkflowMemoryRecord(
+            memory_id=workflow_id,
+            tenant_id=str(tenant_id),
+            batch_id=batch_id,
+            document_id=document_id,
+            source_name=source_name,
+            source_document_sha256="b" * 64,
+            current_stage=MemoryWorkflowStage.COMPLETED,
+            current_status=MemoryWorkflowStatus.SUCCEEDED,
+            review_required=False,
+            review_reasons=(),
+            latest_matching_result_id=None,
+            revision=1,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    normalized_payload = _completed_normalized_invoice_payload(document_id)
+    financial_payload = _completed_financial_validation_payload(document_id)
+    matching_payload = _completed_matching_result_payload(document_id)
+    reference_payload = {"supplier": None, "purchase_order": None, "goods_receipts": []}
+
+    complete_payload = {
+        "normalization_result": normalized_payload,
+        "financial_validation_result": financial_payload,
+        "matching_result": matching_payload,
+        "matched_reference_data": reference_payload,
+    }
+
+    repository.store_invoice_memory(
+        tenant_id=tenant_id,
+        record=MatchedInvoiceMemoryRecord(
+            record_id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            workflow_memory_id=workflow_record.memory_id,
+            batch_id=batch_id,
+            document_id=document_id,
+            matching_result_id=uuid.uuid4(),
+            source_name=source_name,
+            source_document_sha256="b" * 64,
+            invoice_record_id=uuid.uuid4(),
+            invoice_number="INV-SEED-COMPLETED-1",
+            supplier_name="Acme Supplies Ltd",
+            currency="USD",
+            total_amount=Decimal("5.00"),
+            supplier_resolution_status="MATCHED",
+            matched_supplier_id="SUP-1",
+            purchase_order_status="MATCHED",
+            purchase_order_id=None,
+            purchase_order_number="88",
+            goods_receipt_status="NOT_REFERENCED",
+            goods_receipt_ids=(),
+            match_mode="AUTOMATIC",
+            line_match_count=1,
+            normalization_status="SUCCEEDED",
+            financial_validation_status="SUCCEEDED",
+            matching_status="SUCCEEDED",
+            review_required=False,
+            review_reasons=(),
+            normalized_payload=normalized_payload,
+            financial_payload=financial_payload,
+            matching_payload=matching_payload,
+            reference_payload=reference_payload,
+            payload_sha256=canonical_payload_sha256(complete_payload),
+        ),
+    )
+
+    return SeededCompletedInvoice(
+        tenant_id=tenant_id,
+        workflow_id=workflow_record.memory_id,
+        batch_id=batch_id,
+        document_id=document_id,
     )

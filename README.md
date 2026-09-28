@@ -473,6 +473,52 @@ pytest tests/integration/test_review_postgres_integration.py -vv   # repository/
 The PostgreSQL-backed tests need the same `AP_AGENT_TEST_POSTGRES_DSN` as the
 rest of the PostgreSQL acceptance suite above — never a production DSN.
 
+## Frontend (M11A)
+
+`frontend/` is a Next.js (App Router, TypeScript strict) human-review
+interface that consumes the M10 FastAPI application through its published
+`/openapi.json` contract. M11A is **read-only**: it ships the application
+shell, design system, server-side API boundary, and a live dashboard, with
+no review-command writes, payment execution, or ERP posting.
+
+```text
+Browser → Next.js server-side boundary → FastAPI → PostgreSQL
+```
+
+The browser never connects to FastAPI or PostgreSQL directly — every
+request passes through server-only code (`frontend/src/lib`, the
+`app/api/backend/[...path]` route handler).
+
+### Local development
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local   # fill in AP_AGENT_API_BASE_URL etc.
+npm run dev
+```
+
+Requires a running M10 FastAPI instance (`uvicorn ap_agent.api.app:create_app
+--factory ...`, see above) reachable at `AP_AGENT_API_BASE_URL`.
+
+### Scripts
+
+```bash
+npm run lint             # ESLint
+npm run typecheck        # tsc --noEmit
+npm run test             # Vitest (unit + component)
+npm run build             # production build
+npm run test:e2e         # Playwright, mocked backend (no PostgreSQL needed)
+npm run test:e2e:integration  # real FastAPI + PostgreSQL + Next.js acceptance
+npm run api:generate     # regenerate TypeScript types from FastAPI's OpenAPI schema
+npm run api:check        # fail if the generated contract is stale (CI)
+npm run check:build-secrets   # scan .next/static for leaked server-only values
+```
+
+See `docs/m11a_frontend_foundation_report.md` for the full milestone report
+(architecture, design system, test results, deviations, and readiness for
+M11B).
+
 ## Deployment direction
 
 The recommended production-facing architecture is:
