@@ -15,7 +15,11 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: 0,
-  timeout: 90_000,
+  // The remote (Neon) database adds hundreds of ms per connection and the detail page re-reads several
+  // times after each command, so refreshed state can take longer than Playwright's default 5s to appear.
+  // Assertions are unchanged; only how long they may wait.
+  timeout: 180_000,
+  expect: { timeout: 45_000 },
   reporter: [["html", { open: "never", outputFolder: "playwright-report-real-actions" }], ["list"]],
   use: { trace: "retain-on-failure", screenshot: "only-on-failure" },
   projects: [
