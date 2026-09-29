@@ -11,14 +11,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from ap_agent.api.schemas import ApiEnvelope
+from ap_agent.api.schemas import ApiEnvelope, HealthResponse
 from ap_agent.models.interface import interface_utc_now
 
 router = APIRouter(tags=["system"])
 
 
-@router.get("/health", response_model=ApiEnvelope)
-def health_check(request: Request) -> ApiEnvelope:
+@router.get("/health", response_model=ApiEnvelope[HealthResponse])
+def health_check(request: Request) -> ApiEnvelope[HealthResponse]:
     from uuid import uuid4
 
     api_config = request.app.state.api_config
@@ -26,12 +26,12 @@ def health_check(request: Request) -> ApiEnvelope:
     return ApiEnvelope(
         request_id=uuid4(),
         status="SUCCEEDED",
-        data={
-            "service": "ap-agent-review-api",
-            "api_version": api_config.api_version,
-            "command_mode": ("COMMIT" if api_config.enable_review_command_writes else "VALIDATION_ONLY"),
-            "payment_execution": "PROHIBITED",
-        },
+        data=HealthResponse(
+            service="ap-agent-review-api",
+            api_version=api_config.api_version,
+            command_mode=("COMMIT" if api_config.enable_review_command_writes else "VALIDATION_ONLY"),
+            payment_execution="PROHIBITED",
+        ).model_dump(mode="json"),
         errors=tuple(),
         generated_at=interface_utc_now(),
     )

@@ -20,12 +20,12 @@ from ap_agent.repositories.review_repository import ReviewRepository
 router = APIRouter(tags=["dashboard"])
 
 
-@router.get("/api/v1/dashboard", response_model=ApiEnvelope)
+@router.get("/api/v1/dashboard", response_model=ApiEnvelope[DashboardResponse])
 def get_dashboard(
     actor: AuthenticatedActor,
     repository: ReviewRepository = Depends(get_review_repository),
     batch_id: Optional[UUID] = Query(default=None),
-) -> ApiEnvelope:
+) -> ApiEnvelope[DashboardResponse]:
     from ap_agent.services.review_queries import get_dashboard as get_dashboard_record
 
     dashboard = get_dashboard_record(repository, actor.tenant_id, batch_id=batch_id)

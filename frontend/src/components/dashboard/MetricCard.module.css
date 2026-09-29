@@ -48,3 +48,13 @@
 .failed {
   border-left-color: var(--color-failed);
 }
+
+.linked {
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.linked:hover,
+.linked:focus-visible {
+  border-color: var(--color-border-strong);
+}

@@ -7,11 +7,10 @@ export interface NavItem {
 }
 
 /**
- * Application navigation (M11A task §8). "Review queue" and "Invoice
- * detail" are visible but clearly labelled as forthcoming -- M11A ships no
- * review-queue page, per task §2's out-of-scope list; M11B implements
- * them. "Settings" is intentionally omitted. "Payments" must not exist
- * anywhere in this list (task §8/§22).
+ * Application navigation (M11A task §8, M11B task §3). "Review queue" is
+ * now active (M11B). "Invoice detail" is reached only through the queue,
+ * not a standalone nav item. "Settings" is intentionally omitted.
+ * "Payments" must not exist anywhere in this list (task §3/§8/§24).
  */
 export const NAV_ITEMS: NavItem[] = [
   {
@@ -22,7 +21,8 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     label: "Review queue",
-    status: "forthcoming",
-    description: "Coming in M11B",
+    href: "/review-queue",
+    status: "active",
+    description: "Browse and filter invoices awaiting human review",
   },
 ];

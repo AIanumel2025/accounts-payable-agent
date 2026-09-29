@@ -11,16 +11,25 @@ test.describe("navigation", () => {
     await expect(page).toHaveURL(/\/dashboard$/);
   });
 
-  test("desktop sidebar shows Dashboard active and Review queue as forthcoming", async ({ page }) => {
+  test("desktop sidebar shows Dashboard active and Review queue as an active link (M11B task §3)", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/dashboard");
 
     const dashboardLink = page.getByRole("link", { name: "Dashboard" });
     await expect(dashboardLink).toHaveAttribute("aria-current", "page");
 
-    await expect(page.getByText("Review queue")).toBeVisible();
-    await expect(page.getByText("Coming in M11B")).toBeVisible();
-    await expect(page.getByRole("link", { name: /Review queue/ })).toHaveCount(0);
+    const reviewQueueLink = page.getByRole("link", { name: "Review queue" });
+    await expect(reviewQueueLink).toBeVisible();
+    await expect(reviewQueueLink).toHaveAttribute("href", "/review-queue");
+    await expect(reviewQueueLink).not.toHaveAttribute("aria-current", "page");
+  });
+
+  test("Review queue nav link navigates to the queue", async ({ page }) => {
+    await page.goto("/dashboard");
+    await page.getByRole("link", { name: "Review queue" }).click();
+    await expect(page).toHaveURL(/\/review-queue$/);
+    const reviewQueueLink = page.getByRole("link", { name: "Review queue" });
+    await expect(reviewQueueLink).toHaveAttribute("aria-current", "page");
   });
 
   test("no Payments navigation item exists anywhere on the page", async ({ page }) => {

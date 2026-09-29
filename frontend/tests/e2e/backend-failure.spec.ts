@@ -71,4 +71,48 @@ test.describe("backend failure handling", () => {
     await page.getByTestId("backend-health-retry").click();
     await expect(page.getByText("Backend connected")).toBeVisible();
   });
+
+  // M11B task §7/§8: the queue and detail pages reuse the same fetch/error
+  // layer as the dashboard, so only the state-mapping needs re-verifying
+  // per page, not every failure mode again.
+  test("review queue backend unavailable renders a helpful error, not a stack trace", async ({ page, request }) => {
+    await setMockBackendMode(request, "unavailable");
+    await page.goto("/review-queue");
+
+    const errorState = page.getByTestId("error-state");
+    await expect(errorState).toBeVisible();
+    await expect(errorState).toContainText("Backend unavailable");
+
+    const bodyText = await page.locator("body").innerText();
+    expect(bodyText).not.toMatch(/postgres|password|Traceback|dsn|neon\.tech/i);
+  });
+
+  test("review case detail backend unavailable renders a helpful error, not a stack trace", async ({ page, request }) => {
+    await setMockBackendMode(request, "unavailable");
+    await page.goto("/review-cases/cccccccc-0000-4000-8000-000000000003");
+
+    const errorState = page.getByTestId("error-state");
+    await expect(errorState).toBeVisible();
+    await expect(errorState).toContainText("Backend unavailable");
+  });
+
+  test("review queue malformed upstream response is handled without crashing the page", async ({ page, request }) => {
+    await setMockBackendMode(request, "malformed");
+    await page.goto("/review-queue");
+
+    const errorState = page.getByTestId("error-state");
+    await expect(errorState).toBeVisible();
+    await expect(errorState).toContainText("Unexpected response");
+  });
+
+  test("review queue retry recovers the queue once the backend is healthy again", async ({ page, request }) => {
+    await setMockBackendMode(request, "unavailable");
+    await page.goto("/review-queue");
+    await expect(page.getByTestId("error-state")).toBeVisible();
+
+    await setMockBackendMode(request, "normal");
+    await page.getByRole("button", { name: "Retry" }).click();
+
+    await expect(page.getByTestId("queue-table")).toBeVisible();
+  });
 });
