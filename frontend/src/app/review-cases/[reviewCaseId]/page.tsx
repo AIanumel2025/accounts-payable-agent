@@ -2,9 +2,14 @@ import type { BackendHealthState } from "@/components/application-shell/BackendH
 import { Breadcrumb } from "@/components/application-shell/Breadcrumb";
 import { PageHeader } from "@/components/application-shell/PageHeader";
 import { DetailBody } from "@/components/review-detail/DetailBody";
+import { ReviewActions } from "@/components/review-actions/ReviewActions";
 import { ErrorState } from "@/components/feedback/ErrorState";
 import { getBackendHealth } from "@/lib/api/dashboard";
+import { getCommandCapabilities } from "@/lib/api/command-capabilities";
 import { getReviewCaseDetail } from "@/lib/api/review-cases";
+import { loadCommandMode } from "@/lib/config/command-mode";
+import { deriveWorkspaceState, roleLabel } from "@/lib/commands/presentation";
+import { issueCsrfToken } from "@/lib/server/csrf";
 import { parseSafeReturnTo } from "@/lib/api/review-queue-query";
 import { ServerConfigError, loadServerEnvConfig } from "@/lib/config/server-env";
 import type { HealthCommandMode, InvoiceDetailPayload } from "@/types/api-payloads";
@@ -41,13 +46,32 @@ export default async function ReviewCaseDetailPage({
     }
   }
 
-  const [detailResult, healthResult] = await Promise.all([getReviewCaseDetail(reviewCaseId), getBackendHealth()]);
+  const commandMode = loadCommandMode();
+  const actionsEnabled = commandMode.valid && commandMode.mode !== "disabled";
+
+  // Capabilities are only requested when actions could be shown at all -- a
+  // disabled deployment behaves exactly like M11B (no extra backend call).
+  const [detailResult, healthResult, capabilitiesResult] = await Promise.all([
+    getReviewCaseDetail(reviewCaseId),
+    getBackendHealth(),
+    actionsEnabled ? getCommandCapabilities(reviewCaseId) : Promise.resolve(null),
+  ]);
 
   const checkedAtIso = new Date().toISOString();
   const backendHealth: BackendHealthState = healthResult.ok
     ? { reachable: true, data: healthResult.data, checkedAtIso }
     : { reachable: false, data: null, checkedAtIso };
-  const commandMode: HealthCommandMode | "UNKNOWN" = healthResult.ok ? healthResult.data.command_mode : "UNKNOWN";
+  const backendCommandMode: HealthCommandMode | "UNKNOWN" = healthResult.ok ? healthResult.data.command_mode : "UNKNOWN";
+  const capabilities = capabilitiesResult && capabilitiesResult.ok ? capabilitiesResult.data : null;
+  const workspaceState = deriveWorkspaceState({
+    frontendMode: commandMode.mode,
+    modeValid: commandMode.valid,
+    capabilities,
+  });
+  const evidenceSuggestions: Record<string, string[]> = {};
+  if (detailResult.ok) {
+    for (const field of detailResult.data.fields) evidenceSuggestions[field.field_name] = [...field.evidence_reference_ids];
+  }
 
   const title = detailResult.ok ? primaryLabel(detailResult.data) : "Review case";
 
@@ -56,10 +80,15 @@ export default async function ReviewCaseDetailPage({
       <Breadcrumb trail={[{ label: "Review queue", href: returnTo }]} current={title} />
       <PageHeader
         title={title}
-        description="Read-only invoice detail and review history. Claim, decision, and correction controls arrive in a later milestone."
+        description={
+          actionsEnabled
+            ? "Invoice detail, evidence and review history, with controlled review actions."
+            : "Read-only invoice detail and review history."
+        }
         actorRole={actorRole}
         backendHealth={backendHealth}
-        commandMode={commandMode}
+        commandMode={backendCommandMode}
+        frontendMode={commandMode.valid ? commandMode.mode : "disabled"}
       />
       <div className={styles.content}>
         {configErrorMessage ? (
@@ -67,7 +96,20 @@ export default async function ReviewCaseDetailPage({
         ) : !detailResult.ok ? (
           <ErrorState kind={detailResult.kind} />
         ) : (
-          <DetailBody detail={detailResult.data} />
+          <>
+            <ReviewActions
+              reviewCaseId={reviewCaseId}
+              invoiceLabel={title}
+              csrfToken={actionsEnabled ? issueCsrfToken(reviewCaseId) : ""}
+              state={workspaceState}
+              // The raw role enum is server-side configuration; the browser only needs the label.
+              capabilities={capabilities === null ? null : { ...capabilities, actor_role: "" }}
+              roleLabel={roleLabel(capabilities?.actor_role ?? actorRole)}
+              frontendMode={commandMode.valid ? commandMode.mode : "disabled"}
+              evidenceSuggestions={evidenceSuggestions}
+            />
+            <DetailBody detail={detailResult.data} />
+          </>
         )}
       </div>
     </>

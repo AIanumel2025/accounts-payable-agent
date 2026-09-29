@@ -59,17 +59,18 @@
         "title": "ApiCorrectionRequest",
         "type": "object"
       },
-      "ApiEnvelope": {
+      "ApiEnvelope_CommandCapabilitiesResponse_": {
         "additionalProperties": false,
         "properties": {
           "data": {
             "anyOf": [
-              {},
+              {
+                "$ref": "#/components/schemas/CommandCapabilitiesResponse"
+              },
               {
                 "type": "null"
               }
-            ],
-            "title": "Data"
+            ]
           },
           "errors": {
             "default": [],
@@ -99,7 +100,7 @@
           "status",
           "generated_at"
         ],
-        "title": "ApiEnvelope",
+        "title": "ApiEnvelope[CommandCapabilitiesResponse]",
         "type": "object"
       },
       "ApiEnvelope_DashboardResponse_": {
@@ -278,6 +279,87 @@
         "title": "ApiEnvelope[ReviewQueuePageResponse]",
         "type": "object"
       },
+      "ApiEnvelope_Union_ValidationOnlyCommandResponse__CommandResultResponse__WorkflowResumeResponse__": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValidationOnlyCommandResponse"
+              },
+              {
+                "$ref": "#/components/schemas/CommandResultResponse"
+              },
+              {
+                "$ref": "#/components/schemas/WorkflowResumeResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "errors": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "status",
+          "generated_at"
+        ],
+        "title": "ApiEnvelope[Union[ValidationOnlyCommandResponse, CommandResultResponse, WorkflowResumeResponse]]",
+        "type": "object"
+      },
+      "ApiErrorEnvelope": {
+        "additionalProperties": false,
+        "description": "Shape of every controlled error body (`ap_agent.api.errors`).",
+        "properties": {
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "errors",
+          "generated_at"
+        ],
+        "title": "ApiErrorEnvelope",
+        "type": "object"
+      },
       "ApiReviewCommandRequest": {
         "additionalProperties": false,
         "properties": {
@@ -358,6 +440,326 @@
           "requested_at"
         ],
         "title": "ApiReviewCommandRequest",
+        "type": "object"
+      },
+      "AvailableAction": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ReviewAction"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HumanReviewDisposition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requires_corrections": {
+            "title": "Requires Corrections",
+            "type": "boolean"
+          },
+          "requires_notes": {
+            "title": "Requires Notes",
+            "type": "boolean"
+          },
+          "requires_reason_codes": {
+            "title": "Requires Reason Codes",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action",
+          "disposition",
+          "requires_reason_codes",
+          "requires_notes",
+          "requires_corrections"
+        ],
+        "title": "AvailableAction",
+        "type": "object"
+      },
+      "CommandCapabilitiesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_role": {
+            "title": "Actor Role",
+            "type": "string"
+          },
+          "assignment": {
+            "enum": [
+              "UNASSIGNED",
+              "ASSIGNED_TO_ACTOR",
+              "ASSIGNED_TO_OTHER"
+            ],
+            "title": "Assignment",
+            "type": "string"
+          },
+          "available_actions": {
+            "items": {
+              "$ref": "#/components/schemas/AvailableAction"
+            },
+            "title": "Available Actions",
+            "type": "array"
+          },
+          "case_status": {
+            "$ref": "#/components/schemas/ReviewCaseStatus"
+          },
+          "command_mode": {
+            "enum": [
+              "COMMIT",
+              "VALIDATION_ONLY"
+            ],
+            "title": "Command Mode",
+            "type": "string"
+          },
+          "correction_policy": {
+            "$ref": "#/components/schemas/CorrectionPolicyResponse"
+          },
+          "payment_execution": {
+            "const": "PROHIBITED",
+            "title": "Payment Execution",
+            "type": "string"
+          },
+          "permitted_actions": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewAction"
+            },
+            "title": "Permitted Actions",
+            "type": "array"
+          },
+          "resume": {
+            "$ref": "#/components/schemas/ResumeCapabilityResponse"
+          },
+          "review_revision": {
+            "title": "Review Revision",
+            "type": "integer"
+          },
+          "unsupported_actions": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewAction"
+            },
+            "title": "Unsupported Actions",
+            "type": "array"
+          },
+          "workflow_revision": {
+            "title": "Workflow Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command_mode",
+          "actor_role",
+          "case_status",
+          "assignment",
+          "review_revision",
+          "workflow_revision",
+          "permitted_actions",
+          "available_actions",
+          "unsupported_actions",
+          "correction_policy",
+          "resume",
+          "payment_execution"
+        ],
+        "title": "CommandCapabilitiesResponse",
+        "type": "object"
+      },
+      "CommandResultResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "format": "uuid",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "resulting_case_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewCaseStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resulting_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resulting Revision"
+          },
+          "review_case_id": {
+            "format": "uuid",
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InterfaceCommandStatus"
+          },
+          "workflow_resumed": {
+            "title": "Workflow Resumed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command_id",
+          "idempotency_key",
+          "status",
+          "review_case_id",
+          "document_id",
+          "resulting_case_status",
+          "resulting_revision",
+          "workflow_resumed",
+          "decision_id",
+          "message"
+        ],
+        "title": "CommandResultResponse",
+        "type": "object"
+      },
+      "CorrectableHeaderField": {
+        "additionalProperties": false,
+        "properties": {
+          "current_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Value"
+          },
+          "field_name": {
+            "$ref": "#/components/schemas/InvoiceFieldName"
+          }
+        },
+        "required": [
+          "field_name",
+          "current_value"
+        ],
+        "title": "CorrectableHeaderField",
+        "type": "object"
+      },
+      "CorrectableLineValue": {
+        "additionalProperties": false,
+        "properties": {
+          "current_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Value"
+          },
+          "field_name": {
+            "$ref": "#/components/schemas/InvoiceFieldName"
+          },
+          "line_number": {
+            "title": "Line Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line_number",
+          "field_name",
+          "current_value"
+        ],
+        "title": "CorrectableLineValue",
+        "type": "object"
+      },
+      "CorrectionPolicyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_reference_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Reference Ids",
+            "type": "array"
+          },
+          "header_fields": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectableHeaderField"
+            },
+            "title": "Header Fields",
+            "type": "array"
+          },
+          "line_fields": {
+            "items": {
+              "$ref": "#/components/schemas/InvoiceFieldName"
+            },
+            "title": "Line Fields",
+            "type": "array"
+          },
+          "line_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Line Numbers",
+            "type": "array"
+          },
+          "line_values": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectableLineValue"
+            },
+            "title": "Line Values",
+            "type": "array"
+          },
+          "require_evidence": {
+            "title": "Require Evidence",
+            "type": "boolean"
+          },
+          "require_reason": {
+            "title": "Require Reason",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "header_fields",
+          "line_fields",
+          "line_numbers",
+          "line_values",
+          "evidence_reference_ids",
+          "require_reason",
+          "require_evidence"
+        ],
+        "title": "CorrectionPolicyResponse",
         "type": "object"
       },
       "DashboardResponse": {
@@ -541,6 +943,17 @@
           "CORRECTED"
         ],
         "title": "HumanReviewDisposition",
+        "type": "string"
+      },
+      "InterfaceCommandStatus": {
+        "enum": [
+          "ACCEPTED",
+          "IDEMPOTENT",
+          "REJECTED",
+          "CONFLICT",
+          "FAILED"
+        ],
+        "title": "InterfaceCommandStatus",
         "type": "string"
       },
       "InterfaceFieldValueResponse": {
@@ -900,6 +1313,61 @@
           "total_pages"
         ],
         "title": "PaginationMeta",
+        "type": "object"
+      },
+      "ResumeCapabilityResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "already_requested": {
+            "title": "Already Requested",
+            "type": "boolean"
+          },
+          "decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HumanReviewDisposition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "eligible": {
+            "title": "Eligible",
+            "type": "boolean"
+          },
+          "ineligible_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ineligible Reason"
+          }
+        },
+        "required": [
+          "eligible",
+          "already_requested",
+          "disposition",
+          "decision_id",
+          "ineligible_reason"
+        ],
+        "title": "ResumeCapabilityResponse",
         "type": "object"
       },
       "ReviewAction": {
@@ -1308,6 +1776,164 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "ValidationOnlyCommandResponse": {
+        "additionalProperties": false,
+        "description": "M11C task §5: the exact JSON the validation-only branch of\n`submit_review_command` has always returned (an inline dict literal\nuntil now, hence `data?: unknown` in the generated client).",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ReviewAction"
+          },
+          "command_fingerprint": {
+            "title": "Command Fingerprint",
+            "type": "string"
+          },
+          "command_id": {
+            "format": "uuid",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "database_mutation": {
+            "const": false,
+            "title": "Database Mutation",
+            "type": "boolean"
+          },
+          "execution_mode": {
+            "const": "VALIDATION_ONLY",
+            "title": "Execution Mode",
+            "type": "string"
+          },
+          "review_case_id": {
+            "format": "uuid",
+            "title": "Review Case Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "review_case_id",
+          "action",
+          "command_fingerprint",
+          "execution_mode",
+          "database_mutation"
+        ],
+        "title": "ValidationOnlyCommandResponse",
+        "type": "object"
+      },
+      "WorkflowResumeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "format": "uuid",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "derived_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived Version"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "restart_stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrchestrationStage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resulting_case_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewCaseStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resulting_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resulting Revision"
+          },
+          "resume_plan_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Plan Id"
+          },
+          "review_case_id": {
+            "format": "uuid",
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InterfaceCommandStatus"
+          },
+          "workflow_resumed": {
+            "title": "Workflow Resumed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command_id",
+          "idempotency_key",
+          "status",
+          "review_case_id",
+          "document_id",
+          "resulting_case_status",
+          "resulting_revision",
+          "workflow_resumed",
+          "decision_id",
+          "message"
+        ],
+        "title": "WorkflowResumeResponse",
         "type": "object"
       }
     }
@@ -1734,6 +2360,176 @@
         ]
       }
     },
+    "/api/v1/review-cases/{review_case_id}/command-capabilities": {
+      "get": {
+        "description": "Advisory, read-only projection of what this actor may attempt on this\ncase right now (M11C task §6). The command executors still re-validate\neverything transactionally; nothing here authorises anything.",
+        "operationId": "get_review_command_capabilities_api_v1_review_cases__review_case_id__command_capabilities_get",
+        "parameters": [
+          {
+            "description": "Human-review case identifier",
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "description": "Human-review case identifier",
+              "format": "uuid",
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Role"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Authenticated-At",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Authenticated-At"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEnvelope_CommandCapabilitiesResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid authentication."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden role or cross-tenant action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unknown review case."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Stale revision, ownership conflict or idempotency-content conflict."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid, unsupported or prohibited command."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Redacted internal error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Get Review Command Capabilities",
+        "tags": [
+          "review-commands"
+        ]
+      }
+    },
     "/api/v1/review-cases/{review_case_id}/commands": {
       "post": {
         "operationId": "submit_review_command_api_v1_review_cases__review_case_id__commands_post",
@@ -1830,21 +2626,81 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiEnvelope"
+                  "$ref": "#/components/schemas/ApiEnvelope_Union_ValidationOnlyCommandResponse__CommandResultResponse__WorkflowResumeResponse__"
                 }
               }
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid authentication."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden role or cross-tenant action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unknown review case."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Stale revision, ownership conflict or idempotency-content conflict."
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Invalid, unsupported or prohibited command."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Redacted internal error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            },
+            "description": "Database unavailable."
           }
         },
         "summary": "Submit Review Command",

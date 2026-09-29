@@ -29,6 +29,12 @@ const FORBIDDEN_PATTERNS = [
   { name: "development tenant id", pattern: /00000000-0000-0000-0000-000000000000/ },
   { name: "development actor id (default)", pattern: /local-reviewer/ },
   { name: "server-only role configuration value", pattern: /READ_ONLY_AUDITOR/ },
+  // M11C: the command-mode and CSRF-secret configuration names/values are server-only.
+  { name: "AP_AGENT_FRONTEND_REVIEW_COMMAND_MODE variable name", pattern: /AP_AGENT_FRONTEND_REVIEW_COMMAND_MODE/ },
+  { name: "AP_AGENT_FRONTEND_CSRF_SECRET variable name", pattern: /AP_AGENT_FRONTEND_CSRF_SECRET/ },
+  { name: "AP_AGENT_DEV_* variable name", pattern: /AP_AGENT_DEV_(?:TENANT_ID|ACTOR_ID|ACTOR_ROLE)/ },
+  { name: "AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES variable name", pattern: /AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES/ },
+  { name: "development actor id (M11C acceptance/demo)", pattern: /real-reviewer-[ab]|demo-reviewer/ },
 ];
 
 function walk(dir) {

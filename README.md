@@ -473,15 +473,16 @@ pytest tests/integration/test_review_postgres_integration.py -vv   # repository/
 The PostgreSQL-backed tests need the same `AP_AGENT_TEST_POSTGRES_DSN` as the
 rest of the PostgreSQL acceptance suite above — never a production DSN.
 
-## Frontend (M11A/M11B)
+## Frontend (M11A/M11B/M11C)
 
 `frontend/` is a Next.js (App Router, TypeScript strict) human-review
 interface that consumes the M10 FastAPI application through its published
-`/openapi.json` contract. It remains **read-only** through M11B: the
-application shell, design system, server-side API boundary, a live
-dashboard (M11A), and now a review queue and invoice/review-case detail
-page (M11B), with no review-command writes, payment execution, or ERP
-posting.
+`/openapi.json` contract: the application shell, design system,
+server-side API boundary, a live dashboard (M11A), a review queue and
+invoice/review-case detail page (M11B), and — since M11C — **controlled,
+opt-in review actions** (claim, release, approve, correct, reject and a
+workflow-resume handoff). It is **read-only by default**. There is no
+payment execution, bank transfer or ERP posting anywhere.
 
 ```text
 Browser → Next.js server-side boundary → FastAPI → PostgreSQL
@@ -515,6 +516,59 @@ See `docs/m11b_review_queue_detail_report.md` for the full milestone
 report, including the backend-contract findings this UI is built against
 and the exact per-fixture acceptance baseline.
 
+### Review actions (M11C)
+
+The invoice-detail page carries an action workspace for the six actions that
+have a transactional backend executor: `CLAIM`, `RELEASE`, `ACCEPT` (labelled
+"Approve"), `CORRECT`, `REJECT` and `RESUME_WORKFLOW`. `CONFIRM_SUPPLIER`,
+`CONFIRM_PURCHASE_ORDER`, `REQUEST_INFORMATION` and `ESCALATE` have no
+executor yet and are never offered.
+
+**Command modes.** A server-only variable (never `NEXT_PUBLIC_`), matched
+against the backend's `/health` `command_mode`:
+
+| `AP_AGENT_FRONTEND_REVIEW_COMMAND_MODE` | Behaviour |
+|---|---|
+| `disabled` (**default**) | Read-only, exactly like M11B. No command can be forwarded. |
+| `validation_only` | Commands are validated by FastAPI but **never executed**; the UI says "Validated — no database changes were made." Workflow resume is unavailable. Needs a validation-only backend. |
+| `commit` | Commands execute transactionally; the UI re-reads PostgreSQL afterwards. Needs `AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES=true` on the backend. |
+
+A frontend/backend mismatch fails closed (no submission). Writes are never
+enabled by a committed default — set them explicitly, per process.
+
+**Isolated write-enabled demonstration** (needs `AP_AGENT_TEST_POSTGRES_DSN`
+naming the `ap_agent_m8_test` database; the launcher refuses anything else):
+
+```bash
+cd frontend
+npm install
+npm run build
+npm run demo:m11c        # seeds a fresh tenant, starts FastAPI + Next.js, prints a localhost URL
+# ... explore: Dashboard -> Review queue -> open an invoice -> Claim -> Correct/Approve -> Request workflow resume
+# Ctrl+C to stop: both servers exit and the tenant's removable rows are deleted.
+npm run demo:m11c -- --check   # start, confirm the workspace renders, stop (smoke test)
+```
+
+Append-only rows (decisions, audit events, invoice memory and the cases that
+reference decisions) intentionally remain after cleanup — that is the schema's
+immutability guarantee, not a leak.
+
+**Tests:** `npm run test` (unit + component), `npm run test:e2e:actions`
+(stateful mocked backend, four Next.js servers), `npm run test:e2e:real-actions`
+(real FastAPI + PostgreSQL + Next.js, write-enabled, followed by direct database
+verification); backend: `python -m pytest tests/api/test_m11c_review_actions_postgres.py`.
+
+**Important:**
+
+- Workflow resume creates a **controlled handoff only** (restart stage + derived
+  version). *Downstream execution has not run yet* — that is M11D.
+- Authentication is still the M10 **prototype header adapter**. It is
+  **not production authentication**; M11C is **not approved for a public
+  write-enabled deployment**. Headers are built server-side and never come from
+  browser input. Production needs OIDC/JWT.
+
+See `docs/m11c_review_actions_report.md` for the full report.
+
 ### Local development
 
 ```bash
@@ -536,6 +590,9 @@ npm run test             # Vitest (unit + component)
 npm run build             # production build
 npm run test:e2e         # Playwright, mocked backend (no PostgreSQL needed)
 npm run test:e2e:integration  # real FastAPI + PostgreSQL + Next.js acceptance
+npm run test:e2e:actions      # M11C review actions, stateful mocked backend
+npm run test:e2e:real-actions # M11C write-enabled real FastAPI + PostgreSQL + Next.js
+npm run demo:m11c             # isolated, write-enabled local demonstration
 npm run api:generate     # regenerate TypeScript types from FastAPI's OpenAPI schema
 npm run api:check        # fail if the generated contract is stale (CI)
 npm run check:build-secrets   # scan .next/static for leaked server-only values
@@ -589,7 +646,7 @@ The system should not be treated as autonomous financial decision-making authori
 Planned milestones include:
 
 1. ~~Build the FastAPI application layer.~~ Done (M10) — see "Review API (M10)".
-2. Build the Next.js human-review interface.
+2. ~~Build the Next.js human-review interface.~~ Done (M11A–M11C) — read-only views plus controlled, opt-in review actions.
 3. Replace the prototype header authentication with a real identity provider
    (OIDC/JWT) and full role-based access control.
 4. Add asynchronous jobs and worker queues (including consuming a Phase 9
@@ -619,6 +676,7 @@ Detailed milestone reports are available in the `docs/` directory:
 - [Phase 9 human-review API](docs/m10_phase_9_review_api_report.md)
 - [M11A frontend foundation](docs/m11a_frontend_foundation_report.md)
 - [M11B review queue and invoice detail](docs/m11b_review_queue_detail_report.md)
+- [M11C interactive review actions](docs/m11c_review_actions_report.md)
 
 ## Contributing
 

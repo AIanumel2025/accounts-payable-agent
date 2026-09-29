@@ -16,7 +16,10 @@
     "test:e2e:integration": "node scripts/run-real-integration.mjs",
     "api:generate": "node scripts/generate-api-types.mjs",
     "api:check": "node scripts/generate-api-types.mjs --check",
-    "check:build-secrets": "node scripts/check-build-secrets.mjs"
+    "check:build-secrets": "node scripts/check-build-secrets.mjs",
+    "test:e2e:actions": "playwright test --config=playwright.actions.config.ts",
+    "demo:m11c": "node scripts/demo-m11c.mjs",
+    "test:e2e:real-actions": "node scripts/run-real-actions.mjs"
   },
   "dependencies": {
     "next": "16.3.6",

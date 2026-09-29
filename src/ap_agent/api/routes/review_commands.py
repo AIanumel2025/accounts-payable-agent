@@ -34,8 +34,12 @@ from ap_agent.api.config import ApiConfig
 from ap_agent.api.dependencies import AuthenticatedActor, get_api_config, get_interface_config, get_review_repository
 from ap_agent.api.schemas import (
     ApiEnvelope,
+    ApiErrorEnvelope,
     ApiReviewCommandRequest,
+    CommandCapabilitiesResponse,
     CommandResultResponse,
+    ReviewCommandResponseData,
+    ValidationOnlyCommandResponse,
     WorkflowResumeResponse,
 )
 from ap_agent.exceptions import ReviewCaseNotFoundError, ReviewCommandRejectedError, ReviewIntegrityError
@@ -50,6 +54,8 @@ from ap_agent.models.interface import (
 from ap_agent.repositories.review_repository import ReviewRepository
 from ap_agent.services.review_commands import execute_assignment_command, review_command_fingerprint, validate_review_command
 from ap_agent.services.review_decisions import execute_decision_command
+from ap_agent.services.review_capabilities import build_command_capabilities
+from ap_agent.services.review_queries import get_invoice_detail
 from ap_agent.services.workflow_resume import execute_resume_command
 
 router = APIRouter(tags=["review-commands"])
@@ -58,7 +64,66 @@ _ASSIGNMENT_ACTIONS = {ReviewAction.CLAIM, ReviewAction.RELEASE}
 _DECISION_ACTIONS = {ReviewAction.ACCEPT, ReviewAction.CORRECT, ReviewAction.REJECT}
 
 
-@router.post("/api/v1/review-cases/{review_case_id}/commands", response_model=ApiEnvelope)
+# M11C task §5: controlled error envelopes are part of the OpenAPI contract.
+_ERROR_RESPONSES: dict[int | str, dict] = {
+    status_code: {"model": ApiErrorEnvelope, "description": description}
+    for status_code, description in {
+        401: "Missing or invalid authentication.",
+        403: "Forbidden role or cross-tenant action.",
+        404: "Unknown review case.",
+        409: "Stale revision, ownership conflict or idempotency-content conflict.",
+        422: "Invalid, unsupported or prohibited command.",
+        500: "Redacted internal error.",
+        503: "Database unavailable.",
+    }.items()
+}
+
+
+@router.get(
+    "/api/v1/review-cases/{review_case_id}/command-capabilities",
+    response_model=ApiEnvelope[CommandCapabilitiesResponse],
+    responses=_ERROR_RESPONSES,
+)
+def get_review_command_capabilities(
+    actor: AuthenticatedActor,
+    review_case_id: UUID = Path(description="Human-review case identifier"),
+    repository: ReviewRepository = Depends(get_review_repository),
+    interface_config: InterfaceConfig = Depends(get_interface_config),
+    api_config: ApiConfig = Depends(get_api_config),
+) -> ApiEnvelope[CommandCapabilitiesResponse]:
+    """Advisory, read-only projection of what this actor may attempt on this
+    case right now (M11C task §6). The command executors still re-validate
+    everything transactionally; nothing here authorises anything."""
+
+    detail = get_invoice_detail(repository, actor.tenant_id, review_case_id)
+    context = repository.get_command_context(actor.tenant_id, review_case_id)
+
+    if context is None:
+        raise ReviewIntegrityError("Review case has no command context.")
+
+    capabilities = build_command_capabilities(
+        actor=actor,
+        context=context,
+        detail=detail,
+        normalized_payload=repository.get_normalized_invoice_payload(actor.tenant_id, review_case_id),
+        config=interface_config,
+        writes_enabled=api_config.enable_review_command_writes,
+    )
+
+    return ApiEnvelope(
+        request_id=uuid4(),
+        status="SUCCEEDED",
+        data=CommandCapabilitiesResponse(**capabilities).model_dump(mode="json"),
+        errors=tuple(),
+        generated_at=interface_utc_now(),
+    )
+
+
+@router.post(
+    "/api/v1/review-cases/{review_case_id}/commands",
+    response_model=ApiEnvelope[ReviewCommandResponseData],
+    responses=_ERROR_RESPONSES,
+)
 def submit_review_command(
     command_request: ApiReviewCommandRequest,
     actor: AuthenticatedActor,
@@ -66,7 +131,7 @@ def submit_review_command(
     repository: ReviewRepository = Depends(get_review_repository),
     interface_config: InterfaceConfig = Depends(get_interface_config),
     api_config: ApiConfig = Depends(get_api_config),
-) -> ApiEnvelope:
+) -> ApiEnvelope[ReviewCommandResponseData]:
     queue_record = repository.get_review_queue_record(actor.tenant_id, review_case_id)
 
     if queue_record is None:
@@ -130,14 +195,14 @@ def submit_review_command(
         return ApiEnvelope(
             request_id=uuid4(),
             status="VALIDATED",
-            data={
-                "command_id": str(command.command_id),
-                "review_case_id": str(command.review_case_id),
-                "action": command.action.value,
-                "command_fingerprint": review_command_fingerprint(command),
-                "execution_mode": "VALIDATION_ONLY",
-                "database_mutation": False,
-            },
+            data=ValidationOnlyCommandResponse(
+                command_id=command.command_id,
+                review_case_id=command.review_case_id,
+                action=command.action,
+                command_fingerprint=review_command_fingerprint(command),
+                execution_mode="VALIDATION_ONLY",
+                database_mutation=False,
+            ).model_dump(mode="json"),
             errors=tuple(),
             generated_at=interface_utc_now(),
         )

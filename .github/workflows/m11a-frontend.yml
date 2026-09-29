@@ -1,9 +1,9 @@
-name: M11A/M11B frontend foundation
+name: M11A/M11B/M11C frontend
 
-# Dedicated to the M11A/M11B human-review frontend (M11A task brief §18,
-# extended in place by M11B task §19/§20 -- "extend the EXISTING M11
-# frontend CI workflow (not duplicate)" -- rather than a second, parallel
-# workflow file). Runs only when frontend code, the API contract it is
+# Dedicated to the M11A/M11B/M11C human-review frontend (M11A task brief §18,
+# extended in place by M11B task §19/§20 and again by M11C task §30 --
+# "extend the EXISTING M11 frontend CI workflow (not duplicate)" -- rather
+# than a second, parallel workflow file). Runs only when frontend code, the API contract it is
 # generated from, or the backend routes/schemas it exercises could have
 # changed -- never on a documentation-only or unrelated backend-only
 # commit, so a docs-only follow-up never triggers this job (and never the
@@ -16,7 +16,14 @@ on:
       - "frontend/**"
       - "scripts/export_openapi_schema.py"
       - "scripts/manage_m11a_acceptance_tenant.py"
+      - "scripts/manage_m11c_tenant.py"
       - "src/ap_agent/api/**"
+      - "src/ap_agent/services/**"
+      - "src/ap_agent/exceptions.py"
+      - "tests/api/**"
+      - "tests/unit/test_review_*.py"
+      - "tests/unit/test_workflow_resume_policy.py"
+      - "tests/unit/test_api_*.py"
       - "src/ap_agent/models/interface.py"
       - "src/ap_agent/models/orchestration.py"
       - "src/ap_agent/models/memory.py"
@@ -38,7 +45,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: frontend
@@ -60,11 +67,11 @@ jobs:
           cache: "pip"
           cache-dependency-path: pyproject.toml
 
-      - name: Install ap_agent (api + dev extras -- schema export and API/schema tests need no PostgreSQL driver)
+      - name: Install ap_agent (api + postgres + dev extras -- no live database is used in this job)
         working-directory: .
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[api,dev]"
+          pip install -e ".[api,postgres,dev]"
 
       - name: Install frontend dependencies
         run: npm ci
@@ -89,6 +96,17 @@ jobs:
       - name: M10 API/schema tests (non-PostgreSQL subset; backend schemas changed)
         working-directory: .
         run: python -m pytest -v -m "not requires_postgres" tests/api/ tests/unit/test_api_schemas.py
+
+      # M11C task §30: targeted M10 command-policy tests plus the new
+      # capability/error-mapping unit tests (no database needed). The
+      # PostgreSQL-requiring command tests run in the real-integration job.
+      - name: M10/M11C command-policy, capability and error-mapping unit tests
+        working-directory: .
+        run: >
+          python -m pytest -v -m "not requires_postgres"
+          tests/unit/test_review_commands_policy.py tests/unit/test_review_decisions.py
+          tests/unit/test_workflow_resume_policy.py tests/unit/test_review_capabilities.py
+          tests/unit/test_api_errors.py tests/unit/test_api_dependencies.py
 
       - name: Unit and component tests
         run: npm run test
@@ -116,12 +134,31 @@ jobs:
           path: frontend/playwright-report/
           retention-days: 14
 
+      # M11C task §27/§30: the stateful mocked review-action suite. It reuses
+      # the production build made above (AP_AGENT_SKIP_BUILD=1) and starts a
+      # mock backend plus four Next.js servers that differ only in their
+      # server-only command mode / actor role. No database; no write-enabled
+      # default is committed anywhere -- each server's mode is set here per
+      # process by tests/e2e/support/actions-stack.mjs.
+      - name: Browser acceptance tests -- M11C review actions (mocked backend, no PostgreSQL)
+        env:
+          AP_AGENT_SKIP_BUILD: "1"
+        run: npm run test:e2e:actions
+
+      - name: Upload M11C Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-actions
+          path: frontend/playwright-report-actions/
+          retention-days: 14
+
       - name: Check built static assets for server-only secrets
         run: node scripts/check-build-secrets.mjs
 
   real-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     needs: build-and-test
     defaults:
       run:
@@ -212,4 +249,27 @@ jobs:
         with:
           name: playwright-report-integration
           path: frontend/playwright-report-integration/
+          retention-days: 14
+
+      # M11C task §28/§30: the write-enabled acceptance. It targets only
+      # ap_agent_m8_test (the script fails closed otherwise), creates a fresh
+      # isolated tenant and least-privilege role, starts FastAPI with
+      # AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES=true *inside that child process
+      # only* (never globally, never committed as a default), drives real
+      # Chromium sessions through claim/release/approve/correct/reject/resume,
+      # a genuinely concurrent claim, idempotency, stale revisions and
+      # authorization, and then inspects PostgreSQL directly (append-only
+      # decisions/audit events, revisions, original-memory hashes, tenant
+      # isolation). The DSN is never printed.
+      - name: M11C -- run real FastAPI + PostgreSQL + Next.js write-enabled acceptance
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+        run: npm run test:e2e:real-actions
+
+      - name: Upload M11C real-actions Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-real-actions
+          path: frontend/playwright-report-real-actions/
           retention-days: 14

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Accounts Payable Agent">
+  <rect width="32" height="32" rx="7" fill="#1b212b"/>
+  <path d="M9 22V10h7.2a4 4 0 0 1 0 8H9" fill="none" stroke="#5b9dd9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="23" cy="22" r="2.2" fill="#4caf7d"/>
+</svg>

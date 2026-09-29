@@ -57,6 +57,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/review-cases/{review_case_id}/command-capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Review Command Capabilities
+         * @description Advisory, read-only projection of what this actor may attempt on this
+         *     case right now (M11C task §6). The command executors still re-validate
+         *     everything transactionally; nothing here authorises anything.
+         */
+        get: operations["get_review_command_capabilities_api_v1_review_cases__review_case_id__command_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/review-cases/{review_case_id}/commands": {
         parameters: {
             query?: never;
@@ -109,10 +131,9 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /** ApiEnvelope */
-        ApiEnvelope: {
-            /** Data */
-            data?: unknown | null;
+        /** ApiEnvelope[CommandCapabilitiesResponse] */
+        ApiEnvelope_CommandCapabilitiesResponse_: {
+            data?: components["schemas"]["CommandCapabilitiesResponse"] | null;
             /**
              * Errors
              * @default []
@@ -215,6 +236,46 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ApiEnvelope[Union[ValidationOnlyCommandResponse, CommandResultResponse, WorkflowResumeResponse]] */
+        ApiEnvelope_Union_ValidationOnlyCommandResponse__CommandResultResponse__WorkflowResumeResponse__: {
+            /** Data */
+            data?: components["schemas"]["ValidationOnlyCommandResponse"] | components["schemas"]["CommandResultResponse"] | components["schemas"]["WorkflowResumeResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
+        /**
+         * ApiErrorEnvelope
+         * @description Shape of every controlled error body (`ap_agent.api.errors`).
+         */
+        ApiErrorEnvelope: {
+            /** Errors */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
         /** ApiReviewCommandRequest */
         ApiReviewCommandRequest: {
             action: components["schemas"]["ReviewAction"];
@@ -247,6 +308,111 @@ export interface components {
              * Format: date-time
              */
             requested_at: string;
+        };
+        /** AvailableAction */
+        AvailableAction: {
+            action: components["schemas"]["ReviewAction"];
+            disposition: components["schemas"]["HumanReviewDisposition"] | null;
+            /** Requires Corrections */
+            requires_corrections: boolean;
+            /** Requires Notes */
+            requires_notes: boolean;
+            /** Requires Reason Codes */
+            requires_reason_codes: boolean;
+        };
+        /** CommandCapabilitiesResponse */
+        CommandCapabilitiesResponse: {
+            /** Actor Role */
+            actor_role: string;
+            /**
+             * Assignment
+             * @enum {string}
+             */
+            assignment: "UNASSIGNED" | "ASSIGNED_TO_ACTOR" | "ASSIGNED_TO_OTHER";
+            /** Available Actions */
+            available_actions: components["schemas"]["AvailableAction"][];
+            case_status: components["schemas"]["ReviewCaseStatus"];
+            /**
+             * Command Mode
+             * @enum {string}
+             */
+            command_mode: "COMMIT" | "VALIDATION_ONLY";
+            correction_policy: components["schemas"]["CorrectionPolicyResponse"];
+            /**
+             * Payment Execution
+             * @constant
+             */
+            payment_execution: "PROHIBITED";
+            /** Permitted Actions */
+            permitted_actions: components["schemas"]["ReviewAction"][];
+            resume: components["schemas"]["ResumeCapabilityResponse"];
+            /** Review Revision */
+            review_revision: number;
+            /** Unsupported Actions */
+            unsupported_actions: components["schemas"]["ReviewAction"][];
+            /** Workflow Revision */
+            workflow_revision: number;
+        };
+        /** CommandResultResponse */
+        CommandResultResponse: {
+            /**
+             * Command Id
+             * Format: uuid
+             */
+            command_id: string;
+            /** Decision Id */
+            decision_id: string | null;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Message */
+            message: string;
+            resulting_case_status: components["schemas"]["ReviewCaseStatus"] | null;
+            /** Resulting Revision */
+            resulting_revision: number | null;
+            /**
+             * Review Case Id
+             * Format: uuid
+             */
+            review_case_id: string;
+            status: components["schemas"]["InterfaceCommandStatus"];
+            /** Workflow Resumed */
+            workflow_resumed: boolean;
+        };
+        /** CorrectableHeaderField */
+        CorrectableHeaderField: {
+            /** Current Value */
+            current_value: string | null;
+            field_name: components["schemas"]["InvoiceFieldName"];
+        };
+        /** CorrectableLineValue */
+        CorrectableLineValue: {
+            /** Current Value */
+            current_value: string | null;
+            field_name: components["schemas"]["InvoiceFieldName"];
+            /** Line Number */
+            line_number: number;
+        };
+        /** CorrectionPolicyResponse */
+        CorrectionPolicyResponse: {
+            /** Evidence Reference Ids */
+            evidence_reference_ids: string[];
+            /** Header Fields */
+            header_fields: components["schemas"]["CorrectableHeaderField"][];
+            /** Line Fields */
+            line_fields: components["schemas"]["InvoiceFieldName"][];
+            /** Line Numbers */
+            line_numbers: number[];
+            /** Line Values */
+            line_values: components["schemas"]["CorrectableLineValue"][];
+            /** Require Evidence */
+            require_evidence: boolean;
+            /** Require Reason */
+            require_reason: boolean;
         };
         /** DashboardResponse */
         DashboardResponse: {
@@ -321,6 +487,11 @@ export interface components {
          * @enum {string}
          */
         HumanReviewDisposition: "APPROVED" | "REJECTED" | "HOLD" | "NEEDS_INFORMATION" | "CORRECTED";
+        /**
+         * InterfaceCommandStatus
+         * @enum {string}
+         */
+        InterfaceCommandStatus: "ACCEPTED" | "IDEMPOTENT" | "REJECTED" | "CONFLICT" | "FAILED";
         /** InterfaceFieldValueResponse */
         InterfaceFieldValueResponse: {
             /** Confidence */
@@ -440,6 +611,18 @@ export interface components {
             total_count: number;
             /** Total Pages */
             total_pages: number;
+        };
+        /** ResumeCapabilityResponse */
+        ResumeCapabilityResponse: {
+            /** Already Requested */
+            already_requested: boolean;
+            /** Decision Id */
+            decision_id: string | null;
+            disposition: components["schemas"]["HumanReviewDisposition"] | null;
+            /** Eligible */
+            eligible: boolean;
+            /** Ineligible Reason */
+            ineligible_reason: string | null;
         };
         /**
          * ReviewAction
@@ -586,6 +769,72 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * ValidationOnlyCommandResponse
+         * @description M11C task §5: the exact JSON the validation-only branch of
+         *     `submit_review_command` has always returned (an inline dict literal
+         *     until now, hence `data?: unknown` in the generated client).
+         */
+        ValidationOnlyCommandResponse: {
+            action: components["schemas"]["ReviewAction"];
+            /** Command Fingerprint */
+            command_fingerprint: string;
+            /**
+             * Command Id
+             * Format: uuid
+             */
+            command_id: string;
+            /**
+             * Database Mutation
+             * @constant
+             */
+            database_mutation: false;
+            /**
+             * Execution Mode
+             * @constant
+             */
+            execution_mode: "VALIDATION_ONLY";
+            /**
+             * Review Case Id
+             * Format: uuid
+             */
+            review_case_id: string;
+        };
+        /** WorkflowResumeResponse */
+        WorkflowResumeResponse: {
+            /**
+             * Command Id
+             * Format: uuid
+             */
+            command_id: string;
+            /** Decision Id */
+            decision_id: string | null;
+            /** Derived Version */
+            derived_version?: string | null;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Message */
+            message: string;
+            restart_stage?: components["schemas"]["OrchestrationStage"] | null;
+            resulting_case_status: components["schemas"]["ReviewCaseStatus"] | null;
+            /** Resulting Revision */
+            resulting_revision: number | null;
+            /** Resume Plan Id */
+            resume_plan_id?: string | null;
+            /**
+             * Review Case Id
+             * Format: uuid
+             */
+            review_case_id: string;
+            status: components["schemas"]["InterfaceCommandStatus"];
+            /** Workflow Resumed */
+            workflow_resumed: boolean;
+        };
     };
     responses: never;
     parameters: never;
@@ -710,6 +959,97 @@ export interface operations {
             };
         };
     };
+    get_review_command_capabilities_api_v1_review_cases__review_case_id__command_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+                "X-Actor-ID"?: string | null;
+                "X-Actor-Role"?: string | null;
+                "X-Authenticated-At"?: string | null;
+            };
+            path: {
+                /** @description Human-review case identifier */
+                review_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_CommandCapabilitiesResponse_"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden role or cross-tenant action. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unknown review case. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Stale revision, ownership conflict or idempotency-content conflict. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Invalid, unsupported or prohibited command. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Redacted internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+        };
+    };
     submit_review_command_api_v1_review_cases__review_case_id__commands_post: {
         parameters: {
             query?: never;
@@ -737,16 +1077,70 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiEnvelope"];
+                    "application/json": components["schemas"]["ApiEnvelope_Union_ValidationOnlyCommandResponse__CommandResultResponse__WorkflowResumeResponse__"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden role or cross-tenant action. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unknown review case. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Stale revision, ownership conflict or idempotency-content conflict. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Invalid, unsupported or prohibited command. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Redacted internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
                 };
             };
         };
