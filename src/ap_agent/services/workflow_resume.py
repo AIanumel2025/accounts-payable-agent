@@ -410,7 +410,24 @@ def execute_resume_command(
         )
 
         if resulting_workflow_revision is None:
-            raise ReviewIntegrityError("Workflow revision changed during resume.")
+            # M11C deviation D-M11C-2 (docs/m11c_review_actions_report.md): the
+            # notebook/M10 raised a bare integrity error here. Under the
+            # `FOR UPDATE` lock held since `lock_decision_context`, the
+            # observed revision was just validated, so the only way this
+            # guarded UPDATE can match zero rows is that the workflow is
+            # already past `HUMAN_REVIEW/REVIEW_REQUIRED` -- i.e. a resume
+            # handoff was already requested under a *different* idempotency
+            # key (two tabs, a double submit that regenerated identity). That
+            # is a client-visible conflict (409), not an internal failure
+            # (500). Nothing has been written yet, so returning is safe.
+            return WorkflowResumeExecution(
+                command_result=rejected_assignment_result(
+                    command, status=InterfaceCommandStatus.CONFLICT,
+                    message="A workflow resume handoff was already requested for this case.",
+                    errors=("WORKFLOW_NOT_AWAITING_RESUME",),
+                ),
+                resume_plan=None,
+            )
 
         next_sequence_number = repository.next_audit_sequence_number(
             cursor, tenant_id=command.tenant_id, workflow_id=command.workflow_id

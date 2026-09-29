@@ -95,6 +95,9 @@ __all__ = [
 # ------------------------------------------------------------
 
 ACTIVE_DATABASE_REVIEW_STATUSES = ("OPEN", "CLAIMED")
+# M11C: statuses a *detail* read may additionally see (never listed in the
+# default active queue).
+TERMINAL_DATABASE_REVIEW_STATUSES = ("RESOLVED", "CANCELLED")
 
 
 def review_case_status_from_database(database_status: str) -> ReviewCaseStatus:
@@ -129,6 +132,17 @@ def command_case_status_from_database(
         return ReviewCaseStatus.REJECTED
 
     raise ValueError(f"Unsupported database review status: {database_status}.")
+
+
+def _stage_from_database(database_phase: str) -> OrchestrationStage:
+    """M11C: an active case's phase is always `HUMAN_REVIEW` (unchanged);
+    after a workflow-resume handoff the workflow row carries the restart
+    stage, which the detail/queue now report instead of a stale constant."""
+
+    try:
+        return OrchestrationStage(database_phase)
+    except ValueError:
+        return OrchestrationStage.HUMAN_REVIEW
 
 
 def review_priority_from_database(database_priority: int) -> ReviewPriority:
@@ -891,7 +905,7 @@ class ReviewRepository:
             currency=currency,
             total_amount=total_amount,
             workflow_status=workflow_status_from_database(stored_workflow_status),
-            current_stage=OrchestrationStage.HUMAN_REVIEW,
+            current_stage=_stage_from_database(stored_current_phase),
             case_status=command_case_status_from_database(stored_review_status, resolution_code),
             priority=review_priority_from_database(int(stored_priority)),
             review_reasons=tuple(review_reason_codes),
@@ -1036,11 +1050,20 @@ class ReviewRepository:
         if stored_workflow_status != queue_record.workflow_status.value:
             raise ReviewIntegrityError("Invoice-detail workflow status differs from the review queue.")
 
-        if not stored_review_required:
+        # M11C deviation D-M11C-1 (documented in docs/m11c_review_actions_report.md):
+        # the notebook's/M10's detail read only ever supported *active*
+        # (OPEN/CLAIMED) cases. M11C's terminal decisions and workflow-resume
+        # handoff make RESOLVED cases (and, after a resume request, a workflow
+        # no longer flagged `review_required`) legitimate detail targets --
+        # the decision history and timeline are exactly what a reviewer must
+        # see after acting. Every active-case invariant below is unchanged.
+        case_is_active = stored_review_status in ACTIVE_DATABASE_REVIEW_STATUSES
+
+        if case_is_active and not stored_review_required:
             raise ReviewIntegrityError("An active review detail is not marked for review.")
 
-        if stored_review_status not in ACTIVE_DATABASE_REVIEW_STATUSES:
-            raise ReviewIntegrityError("Invoice-detail review case is not active.")
+        if not case_is_active and stored_review_status not in TERMINAL_DATABASE_REVIEW_STATUSES:
+            raise ReviewIntegrityError("Invoice-detail review case has an unsupported status.")
 
         timeline = tuple(
             InterfaceTimelineEvent(
@@ -1076,10 +1099,10 @@ class ReviewRepository:
             source_document_sha256=stored_source_sha256,
             source_artifact_uri=source_artifact_uri,
             workflow_status=queue_record.workflow_status,
-            current_stage=OrchestrationStage.HUMAN_REVIEW,
+            current_stage=queue_record.current_stage,
             case_status=queue_record.case_status,
             revision=queue_record.revision,
-            review_required=True,
+            review_required=bool(stored_review_required),
             review_reasons=tuple(stored_review_reasons),
             fields=_project_interface_fields(normalized_payload),
             financial_checks=_project_financial_checks(financial_payload),
@@ -1109,6 +1132,34 @@ class ReviewRepository:
             return None
 
         return self._row_to_command_context(row, resolution_aware=True)
+
+    def get_normalized_invoice_payload(self, tenant_id: UUID, review_case_id: UUID) -> Optional[dict[str, Any]]:
+        """Read-only copy of the case's *original* normalized invoice memory
+        (M11C task §6: lets the capability projection show current line
+        values). Never writes; `invoice_memory_records` is append-only by
+        trigger, so this is also the immutable value corrections are
+        checked against."""
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SET TRANSACTION READ ONLY;")
+                set_tenant_context(cursor, str(tenant_id))
+                cursor.execute(
+                    """
+                    SELECT invoice.normalized_invoice
+                    FROM ap_agent.review_cases AS review
+                    JOIN ap_agent.invoice_memory_records AS invoice
+                        ON invoice.tenant_id = review.tenant_id AND invoice.workflow_id = review.workflow_id
+                    WHERE review.tenant_id = %s AND review.review_id = %s;
+                    """,
+                    (tenant_id, review_case_id),
+                )
+                row = cursor.fetchone()
+
+        if row is None or not isinstance(row[0], dict):
+            return None
+
+        return row[0]
 
     def lock_assignment_context(
         self, cursor: "psycopg.Cursor", *, tenant_id: UUID, workflow_id: UUID, batch_id: UUID, document_id: UUID, review_case_id: UUID

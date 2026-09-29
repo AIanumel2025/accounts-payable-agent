@@ -15,6 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ap_agent.exceptions import (
@@ -60,11 +61,19 @@ def command_http_error(errors: tuple[str, ...]) -> int:
     ):
         return status.HTTP_409_CONFLICT
 
+    # M11C task §17/§18: a claim that finds the case already claimed/no
+    # longer open, or a release/decision on a case that is not claimed, is
+    # an ownership/state conflict (409), not a malformed request (422). These
+    # codes previously fell through to the 422 default.
     if any(
         error
         in {
             "CASE_ASSIGNED_TO_DIFFERENT_REVIEWER",
             "DECISION_ACTOR_MISMATCH",
+            "CASE_NOT_OPEN",
+            "CASE_ALREADY_ASSIGNED",
+            "CASE_NOT_CLAIMED",
+            "WORKFLOW_NOT_AWAITING_RESUME",
         }
         for error in errors
     ):
@@ -81,7 +90,38 @@ def _error_envelope(request_id: str, errors: tuple[str, ...]) -> dict[str, Any]:
     }
 
 
+def _validation_error_codes(exc: RequestValidationError) -> tuple[str, ...]:
+    """Stable, input-free codes for a request-validation failure (M11C
+    task §18). FastAPI's default 422 body echoes the offending input value
+    back; this reports only which field failed, never its content."""
+
+    codes: list[str] = ["REQUEST_VALIDATION_FAILED"]
+
+    for error in exc.errors():
+        location = tuple(str(part) for part in error.get("loc", ()) if part not in {"body", "query", "path"})
+
+        if location[:1] == ("action",):
+            code = "REVIEW_ACTION_NOT_SUPPORTED"
+        elif location:
+            code = "INVALID_FIELD:" + ".".join(location)
+        else:
+            code = "INVALID_REQUEST"
+
+        if code not in codes:
+            codes.append(code)
+
+    return tuple(codes)
+
+
 def register_exception_handlers(app) -> None:  # `app: FastAPI`, untyped to avoid an import cycle at module load
+    @app.exception_handler(RequestValidationError)
+    async def _handle_request_validation(request: Request, exc: RequestValidationError) -> JSONResponse:
+        request_id = str(uuid4())
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=_error_envelope(request_id, _validation_error_codes(exc)),
+        )
+
     @app.exception_handler(ReviewCaseNotFoundError)
     async def _handle_not_found(request: Request, exc: ReviewCaseNotFoundError) -> JSONResponse:
         request_id = str(uuid4())

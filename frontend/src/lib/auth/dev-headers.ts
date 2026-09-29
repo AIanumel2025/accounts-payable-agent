@@ -15,11 +15,11 @@ import type { ServerEnvConfig } from "@/lib/config/server-env";
  * timezone-aware current timestamp, never cached or reused across
  * requests.
  */
-export function buildDevelopmentAuthHeaders(config: ServerEnvConfig): Record<string, string> {
+export function buildDevelopmentAuthHeaders(config: ServerEnvConfig, now: Date = new Date()): Record<string, string> {
   return {
     "X-Tenant-ID": config.devTenantId,
     "X-Actor-ID": config.devActorId,
     "X-Actor-Role": config.devActorRole,
-    "X-Authenticated-At": new Date().toISOString(),
+    "X-Authenticated-At": now.toISOString(),
   };
 }

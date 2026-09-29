@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Any, Generic, Literal, Optional, TypeVar
+from typing import Annotated, Any, Generic, Literal, Optional, TypeVar, Union
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
@@ -67,6 +67,15 @@ __all__ = [
     "ApiReviewCommandRequest",
     "CommandResultResponse",
     "WorkflowResumeResponse",
+    "ValidationOnlyCommandResponse",
+    "ReviewCommandResponseData",
+    "ApiErrorEnvelope",
+    "CorrectableHeaderField",
+    "CorrectableLineValue",
+    "CorrectionPolicyResponse",
+    "AvailableAction",
+    "ResumeCapabilityResponse",
+    "CommandCapabilitiesResponse",
 ]
 
 
@@ -481,9 +490,24 @@ class CommandResultResponse(_StrictModel):
         )
 
 
+class ValidationOnlyCommandResponse(_StrictModel):
+    """M11C task §5: the exact JSON the validation-only branch of
+    `submit_review_command` has always returned (an inline dict literal
+    until now, hence `data?: unknown` in the generated client)."""
+
+    command_id: UUID
+    review_case_id: UUID
+    action: ReviewAction
+    command_fingerprint: str
+    execution_mode: Literal["VALIDATION_ONLY"]
+    database_mutation: Literal[False]
+
+
 class WorkflowResumeResponse(CommandResultResponse):
     restart_stage: Optional[OrchestrationStage] = None
     derived_version: Optional[str] = None
+    # M11C task §15: additive -- the resume-plan (handoff) identity.
+    resume_plan_id: Optional[UUID] = None
 
     @classmethod
     def from_execution(cls, execution: WorkflowResumeExecution) -> "WorkflowResumeResponse":
@@ -492,4 +516,81 @@ class WorkflowResumeResponse(CommandResultResponse):
             **base.model_dump(),
             restart_stage=(execution.resume_plan.restart_stage if execution.resume_plan else None),
             derived_version=(execution.resume_plan.derived_version if execution.resume_plan else None),
+            resume_plan_id=(execution.resume_plan.resume_plan_id if execution.resume_plan else None),
         )
+
+
+# Union member order matters for FastAPI's response validation of the
+# already-built `data` dict: `ValidationOnlyCommandResponse` has disjoint
+# keys; a plain committed/idempotent result validates as
+# `CommandResultResponse` (extra="forbid" rejects resume-only keys), so a
+# dict carrying `restart_stage`/`derived_version` can only be a
+# `WorkflowResumeResponse`. The wire JSON is byte-for-byte what it was
+# before M11C (plus the additive `resume_plan_id` on resume results).
+ReviewCommandResponseData = Union[ValidationOnlyCommandResponse, CommandResultResponse, WorkflowResumeResponse]
+
+
+class ApiErrorEnvelope(_StrictModel):
+    """Shape of every controlled error body (`ap_agent.api.errors`)."""
+
+    request_id: UUID
+    errors: tuple[str, ...]
+    generated_at: datetime
+
+
+# ------------------------------------------------------------
+# Command capabilities (M11C task §6) -- advisory, read-only projection.
+# Never carries a tenant id, actor id, credential or configuration value.
+# ------------------------------------------------------------
+
+
+class CorrectableHeaderField(_StrictModel):
+    field_name: InvoiceFieldName
+    current_value: Optional[str]
+
+
+class CorrectableLineValue(_StrictModel):
+    line_number: int
+    field_name: InvoiceFieldName
+    current_value: Optional[str]
+
+
+class CorrectionPolicyResponse(_StrictModel):
+    header_fields: tuple[CorrectableHeaderField, ...]
+    line_fields: tuple[InvoiceFieldName, ...]
+    line_numbers: tuple[int, ...]
+    line_values: tuple[CorrectableLineValue, ...]
+    evidence_reference_ids: tuple[str, ...]
+    require_reason: bool
+    require_evidence: bool
+
+
+class AvailableAction(_StrictModel):
+    action: ReviewAction
+    disposition: Optional[HumanReviewDisposition]
+    requires_reason_codes: bool
+    requires_notes: bool
+    requires_corrections: bool
+
+
+class ResumeCapabilityResponse(_StrictModel):
+    eligible: bool
+    already_requested: bool
+    disposition: Optional[HumanReviewDisposition]
+    decision_id: Optional[UUID]
+    ineligible_reason: Optional[str]
+
+
+class CommandCapabilitiesResponse(_StrictModel):
+    command_mode: Literal["COMMIT", "VALIDATION_ONLY"]
+    actor_role: str
+    case_status: ReviewCaseStatus
+    assignment: Literal["UNASSIGNED", "ASSIGNED_TO_ACTOR", "ASSIGNED_TO_OTHER"]
+    review_revision: int
+    workflow_revision: int
+    permitted_actions: tuple[ReviewAction, ...]
+    available_actions: tuple[AvailableAction, ...]
+    unsupported_actions: tuple[ReviewAction, ...]
+    correction_policy: CorrectionPolicyResponse
+    resume: ResumeCapabilityResponse
+    payment_execution: Literal["PROHIBITED"]

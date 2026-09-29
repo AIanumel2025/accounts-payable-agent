@@ -44,3 +44,20 @@ export type OrchestrationStageValue = components["schemas"]["OrchestrationStage"
 export type InvoiceFieldNameValue = components["schemas"]["InvoiceFieldName"];
 export type NormalizedValueTypeValue = components["schemas"]["NormalizedValueType"];
 export type HumanReviewDispositionValue = components["schemas"]["HumanReviewDisposition"];
+
+// M11C: typed command + capability payloads (all aliases into the generated
+// contract; `api:check` therefore detects command-contract drift).
+export type CommandCapabilitiesPayload = components["schemas"]["CommandCapabilitiesResponse"];
+export type AvailableActionPayload = components["schemas"]["AvailableAction"];
+export type CorrectionPolicyPayload = components["schemas"]["CorrectionPolicyResponse"];
+export type ResumeCapabilityPayload = components["schemas"]["ResumeCapabilityResponse"];
+export type CorrectableHeaderFieldPayload = components["schemas"]["CorrectableHeaderField"];
+export type CorrectableLineValuePayload = components["schemas"]["CorrectableLineValue"];
+
+export type ApiCommandRequest = components["schemas"]["ApiReviewCommandRequest"];
+export type ApiCorrectionRequestPayload = components["schemas"]["ApiCorrectionRequest"];
+export type ValidationOnlyCommandPayload = components["schemas"]["ValidationOnlyCommandResponse"];
+export type CommittedCommandPayload = components["schemas"]["CommandResultResponse"];
+export type WorkflowResumePayload = components["schemas"]["WorkflowResumeResponse"];
+export type ApiErrorEnvelopePayload = components["schemas"]["ApiErrorEnvelope"];
+export type ReviewActionValue = components["schemas"]["ReviewAction"];
