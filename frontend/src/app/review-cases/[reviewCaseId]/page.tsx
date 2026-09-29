@@ -102,7 +102,8 @@ export default async function ReviewCaseDetailPage({
               invoiceLabel={title}
               csrfToken={actionsEnabled ? issueCsrfToken(reviewCaseId) : ""}
               state={workspaceState}
-              capabilities={capabilities}
+              // The raw role enum is server-side configuration; the browser only needs the label.
+              capabilities={capabilities === null ? null : { ...capabilities, actor_role: "" }}
               roleLabel={roleLabel(capabilities?.actor_role ?? actorRole)}
               frontendMode={commandMode.valid ? commandMode.mode : "disabled"}
               evidenceSuggestions={evidenceSuggestions}

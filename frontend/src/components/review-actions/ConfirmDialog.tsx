@@ -57,6 +57,27 @@ export function ConfirmDialog({
         event.preventDefault();
         if (!pending) onCancel();
       }}
+      onKeyDown={(event) => {
+        if (event.key !== "Tab") return;
+        // A native modal dialog makes the page inert but lets Tab leave the
+        // document (into browser chrome). Wrap focus explicitly so it cycles.
+        const dialog = ref.current;
+        if (!dialog) return;
+        const focusable = Array.from(
+          dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])'),
+        );
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!first || !last) return;
+        const active = document.activeElement;
+        if (event.shiftKey && (active === first || !dialog.contains(active))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}
     >
       <div className={styles.dialogBody}>
         <h2 id={titleId} className={styles.dialogTitle}>{title}</h2>

@@ -13,7 +13,7 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  testIgnore: ["**/real-integration.spec.ts"],
+  testIgnore: ["**/real-integration.spec.ts", "**/real-actions.spec.ts", "**/actions-*.spec.ts"],
   // Serial, not parallel: every spec file drives the same mock-backend
   // process's shared mutable `mode` (tests/e2e/support/mock-backend.mjs),
   // so two tests racing to set different modes would flake regardless of

@@ -20,3 +20,5 @@
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store
+playwright-report-actions/
+playwright-report-real-actions/
