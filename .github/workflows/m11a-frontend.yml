@@ -254,6 +254,9 @@ jobs:
       - name: M10 API/schema tests (PostgreSQL-requiring subset relevant to ApiEnvelope[T])
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+          # Distinct from the M8/M9/M10 workflow's role: both workflows may run
+          # at once against the same database.
+          AP_AGENT_TEST_API_RUNTIME_ROLE: ap_agent_m11a_ci_api_runtime
         working-directory: .
         run: >-
           python -m pytest -v tests/api/ tests/unit/test_api_schemas.py
@@ -311,6 +314,9 @@ jobs:
       - name: M11D -- real-PostgreSQL control-plane, worker and resume tests
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+          # Distinct from the M8/M9/M10 workflow's role: both workflows may run
+          # at once against the same database.
+          AP_AGENT_TEST_API_RUNTIME_ROLE: ap_agent_m11a_ci_api_runtime
         working-directory: .
         run: >-
           python -m pytest -v
