@@ -177,7 +177,9 @@ jobs:
 
   real-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # Raised from 35: each remote-database round trip is slow; the M10, M11C and
+    # M11D real-PostgreSQL steps and three real-stack browser runs share it.
+    timeout-minutes: 90
     needs: build-and-test
     defaults:
       run:
@@ -261,7 +263,7 @@ jobs:
         run: >-
           python -m pytest -v tests/api/ tests/unit/test_api_schemas.py
           --ignore=tests/api/test_review_api_uvicorn.py
-          --ignore=tests/api/test_m11d_paddle_worker_postgres.py
+          --ignore-glob='tests/api/test_m11d_*'
 
       # M11A task §15, extended by M11B task §18 to also seed and assert
       # against the three named review-case detail fixtures: the real
