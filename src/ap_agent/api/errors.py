@@ -19,6 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ap_agent.exceptions import (
+    OperationsRequestRejectedError,
     PostgresConfigurationError,
     ReviewAuthenticationError,
     ReviewCaseNotFoundError,
@@ -120,6 +121,15 @@ def register_exception_handlers(app) -> None:  # `app: FastAPI`, untyped to avoi
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content=_error_envelope(request_id, _validation_error_codes(exc)),
+        )
+
+    @app.exception_handler(OperationsRequestRejectedError)
+    async def _handle_operations_rejected(request: Request, exc: OperationsRequestRejectedError) -> JSONResponse:
+        # Stable, input-free code only (M11D Core): never the filename,
+        # bytes, path or key that caused it.
+        return JSONResponse(
+            status_code=exc.http_status,
+            content=_error_envelope(str(uuid4()), (exc.code,)),
         )
 
     @app.exception_handler(ReviewCaseNotFoundError)

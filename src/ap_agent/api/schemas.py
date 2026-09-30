@@ -46,6 +46,7 @@ from ap_agent.models.interface import (
     WorkflowResumeExecution,
 )
 from ap_agent.models.memory import HumanReviewDecision, HumanReviewDisposition
+from ap_agent.models.operations import WorkflowJob, WorkflowJobEvent
 from ap_agent.models.orchestration import InvoiceWorkflowStatus, OrchestrationStage
 from ap_agent.services.review_queries import ReviewQueuePage
 
@@ -76,6 +77,12 @@ __all__ = [
     "AvailableAction",
     "ResumeCapabilityResponse",
     "CommandCapabilitiesResponse",
+    "JobSummaryResponse",
+    "JobResponse",
+    "JobEventResponse",
+    "JobDetailResponse",
+    "JobListResponse",
+    "SubmissionResponse",
 ]
 
 
@@ -131,6 +138,9 @@ class HealthResponse(_StrictModel):
     api_version: str
     command_mode: Literal["COMMIT", "VALIDATION_ONLY"]
     payment_execution: Literal["PROHIBITED"]
+    # M11D Core: additive. The frontend compares this with its own
+    # operations mode and fails closed on a mismatch.
+    operations_mode: Literal["ENABLED", "DISABLED"] = "DISABLED"
 
 
 # ------------------------------------------------------------
@@ -594,3 +604,136 @@ class CommandCapabilitiesResponse(_StrictModel):
     correction_policy: CorrectionPolicyResponse
     resume: ResumeCapabilityResponse
     payment_execution: Literal["PROHIBITED"]
+
+
+# ------------------------------------------------------------
+# M11D Core: operations console (upload jobs and resume jobs)
+#
+# No artifact reference, hash, filesystem path or raw internal payload is
+# ever part of a response: a job exposes its identity, state, stage, a
+# controlled error code and a small, explicit summary.
+# ------------------------------------------------------------
+
+JobTypeLiteral = Literal["PROCESS_DOCUMENT", "RESUME_WORKFLOW"]
+JobStatusLiteral = Literal["QUEUED", "RUNNING", "SUCCEEDED", "REVIEW_REQUIRED", "FAILED"]
+
+
+class JobStageSummary(_StrictModel):
+    stage: str
+    status: str
+    attempt: int
+
+
+class JobSummaryResponse(_StrictModel):
+    workflow_status: Optional[str] = None
+    review_required: Optional[bool] = None
+    review_reasons: tuple[str, ...] = tuple()
+    stages: tuple[JobStageSummary, ...] = tuple()
+    invoice_number: Optional[str] = None
+    supplier_name: Optional[str] = None
+    currency: Optional[str] = None
+    total_amount: Optional[str] = None
+    supplier_status: Optional[str] = None
+    purchase_order_status: Optional[str] = None
+    financial_validation_status: Optional[str] = None
+    # Resume provenance (RESUME_WORKFLOW jobs).
+    restart_stage: Optional[str] = None
+    derived_version: Optional[str] = None
+    decision_id: Optional[UUID] = None
+    resume_plan_id: Optional[UUID] = None
+    memory_version_id: Optional[UUID] = None
+    executed_stages: tuple[str, ...] = tuple()
+    corrected_fields: tuple[str, ...] = tuple()
+    outcome: Optional[str] = None
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "JobSummaryResponse":
+        known = {name for name in cls.model_fields}
+        filtered = {key: value for key, value in payload.items() if key in known}
+        filtered["stages"] = tuple(
+            JobStageSummary(stage=str(item["stage"]), status=str(item["status"]), attempt=int(item.get("attempt", 1)))
+            for item in payload.get("stages", ())
+        )
+        return cls(**filtered)
+
+
+class JobResponse(_StrictModel):
+    job_id: UUID
+    job_type: JobTypeLiteral
+    status: JobStatusLiteral
+    current_stage: Optional[str]
+    source_name: str
+    media_type: Optional[str]
+    byte_size: Optional[int]
+    attempt_count: int
+    error_code: Optional[str]
+    review_case_id: Optional[UUID]
+    # The review case a RESUME_WORKFLOW job was requested from.
+    resumed_review_case_id: Optional[UUID]
+    workflow_id: Optional[UUID]
+    summary: JobSummaryResponse
+    created_at: datetime
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    updated_at: datetime
+
+    @classmethod
+    def from_domain(cls, job: WorkflowJob) -> "JobResponse":
+        return cls(
+            job_id=job.job_id,
+            job_type=job.job_type.value,
+            status=job.status.value,
+            current_stage=job.current_stage,
+            source_name=job.source_name,
+            media_type=job.media_type,
+            byte_size=job.byte_size,
+            attempt_count=job.attempt_count,
+            error_code=job.error_code,
+            review_case_id=job.result_review_id,
+            resumed_review_case_id=job.review_id if job.job_type.value == "RESUME_WORKFLOW" else None,
+            workflow_id=job.workflow_id,
+            summary=JobSummaryResponse.from_payload(job.result_summary),
+            created_at=job.created_at,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+            updated_at=job.updated_at,
+        )
+
+
+class JobEventResponse(_StrictModel):
+    sequence_number: int
+    event_type: str
+    stage: Optional[str]
+    status: str
+    attempt_number: int
+    message: str
+    error_code: Optional[str]
+    occurred_at: datetime
+
+    @classmethod
+    def from_domain(cls, event: WorkflowJobEvent) -> "JobEventResponse":
+        return cls(
+            sequence_number=event.sequence_number,
+            event_type=event.event_type,
+            stage=event.stage,
+            status=event.status,
+            attempt_number=event.attempt_number,
+            message=event.message,
+            error_code=event.error_code,
+            occurred_at=event.occurred_at,
+        )
+
+
+class JobDetailResponse(_StrictModel):
+    job: JobResponse
+    events: tuple[JobEventResponse, ...]
+
+
+class JobListResponse(_StrictModel):
+    items: tuple[JobResponse, ...]
+    pagination: PaginationMeta
+
+
+class SubmissionResponse(_StrictModel):
+    job: JobResponse
+    idempotent_replay: bool

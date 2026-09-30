@@ -31,6 +31,7 @@ def health_check(request: Request) -> ApiEnvelope[HealthResponse]:
             api_version=api_config.api_version,
             command_mode=("COMMIT" if api_config.enable_review_command_writes else "VALIDATION_ONLY"),
             payment_execution="PROHIBITED",
+            operations_mode=("ENABLED" if api_config.enable_operations else "DISABLED"),
         ).model_dump(mode="json"),
         errors=tuple(),
         generated_at=interface_utc_now(),
