@@ -45,6 +45,9 @@ __all__ = [
     "OperationsRepository",
     "job_event_id",
     "job_batch_id",
+    "resume_job_id",
+    "insert_job_event",
+    "insert_resume_job",
     "set_worker_scope",
 ]
 
@@ -138,6 +141,100 @@ def _row_to_event(row: tuple[Any, ...]) -> WorkflowJobEvent:
     )
 
 
+def insert_job_event(
+    cursor: "psycopg.Cursor",
+    *,
+    tenant_id: UUID,
+    job_id: UUID,
+    event_type: str,
+    status: str,
+    message: str,
+    stage: Optional[str] = None,
+    attempt_number: int = 0,
+    error_code: Optional[str] = None,
+) -> int:
+    """Append one event inside the caller's transaction. The job row is
+    locked first so concurrent appenders (control plane and worker) cannot
+    compute the same sequence number."""
+
+    cursor.execute(
+        "SELECT 1 FROM ap_agent.workflow_jobs WHERE tenant_id = %s AND job_id = %s FOR NO KEY UPDATE;",
+        (tenant_id, job_id),
+    )
+
+    if cursor.fetchone() is None:
+        raise JobStateError("The job does not exist for this tenant.")
+
+    cursor.execute(
+        """
+        SELECT COALESCE(MAX(sequence_number), 0) + 1
+        FROM ap_agent.workflow_job_events WHERE tenant_id = %s AND job_id = %s;
+        """,
+        (tenant_id, job_id),
+    )
+    sequence_number = int(cursor.fetchone()[0])
+
+    cursor.execute(
+        """
+        INSERT INTO ap_agent.workflow_job_events
+            (event_id, tenant_id, job_id, sequence_number, event_type, stage, status,
+             attempt_number, message, error_code, occurred_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp());
+        """,
+        (
+            job_event_id(tenant_id, job_id, sequence_number), tenant_id, job_id, sequence_number,
+            event_type, stage, status, attempt_number, message[:500] or "event", error_code,
+        ),
+    )
+    return sequence_number
+
+
+def resume_job_id(tenant_id: UUID, resume_plan_id: UUID) -> UUID:
+    return uuid5(NAMESPACE_URL, f"ap-agent/resume-job/{tenant_id}/{resume_plan_id}")
+
+
+def insert_resume_job(
+    cursor: "psycopg.Cursor",
+    *,
+    tenant_id: UUID,
+    idempotency_key: str,
+    request_fingerprint: str,
+    source_name: str,
+    workflow_id: UUID,
+    batch_id: UUID,
+    document_id: UUID,
+    review_id: UUID,
+    resume_plan_id: UUID,
+    restart_stage: str,
+    created_by: str,
+) -> WorkflowJob:
+    """Enqueue the `RESUME_WORKFLOW` job inside the *caller's* resume-command
+    transaction, so the handoff, its audit event and the job commit (or roll
+    back) together. The job id is a pure function of the plan id."""
+
+    job_id = resume_job_id(tenant_id, resume_plan_id)
+
+    cursor.execute(
+        f"""
+        INSERT INTO ap_agent.workflow_jobs
+            (job_id, tenant_id, job_type, idempotency_key, request_fingerprint, source_name,
+             workflow_id, batch_id, document_id, review_id, resume_plan_id, current_stage, created_by)
+        VALUES (%s, %s, 'RESUME_WORKFLOW', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING {_JOB_COLUMNS};
+        """,
+        (
+            job_id, tenant_id, idempotency_key, request_fingerprint, source_name, workflow_id, batch_id,
+            document_id, review_id, resume_plan_id, restart_stage, created_by,
+        ),
+    )
+    job = _row_to_job(cursor.fetchone())
+    insert_job_event(
+        cursor, tenant_id=tenant_id, job_id=job_id, event_type="JOB_SUBMITTED", status="QUEUED",
+        stage=restart_stage, message=f"Workflow resume queued; restart stage {restart_stage}.",
+    )
+    return job
+
+
 class OperationsRepository:
     def __init__(self, dsn: str, config: MemoryConfig) -> None:
         self._dsn = dsn
@@ -161,53 +258,8 @@ class OperationsRepository:
     # Events
     # ------------------------------------------------------------
 
-    def insert_event(
-        self,
-        cursor: "psycopg.Cursor",
-        *,
-        tenant_id: UUID,
-        job_id: UUID,
-        event_type: str,
-        status: str,
-        message: str,
-        stage: Optional[str] = None,
-        attempt_number: int = 0,
-        error_code: Optional[str] = None,
-    ) -> int:
-        """Append one event. The job row is locked first so concurrent
-        appenders (control plane and worker) cannot compute the same
-        sequence number."""
-
-        cursor.execute(
-            "SELECT 1 FROM ap_agent.workflow_jobs WHERE tenant_id = %s AND job_id = %s FOR NO KEY UPDATE;",
-            (tenant_id, job_id),
-        )
-
-        if cursor.fetchone() is None:
-            raise JobStateError("The job does not exist for this tenant.")
-
-        cursor.execute(
-            """
-            SELECT COALESCE(MAX(sequence_number), 0) + 1
-            FROM ap_agent.workflow_job_events WHERE tenant_id = %s AND job_id = %s;
-            """,
-            (tenant_id, job_id),
-        )
-        sequence_number = int(cursor.fetchone()[0])
-
-        cursor.execute(
-            """
-            INSERT INTO ap_agent.workflow_job_events
-                (event_id, tenant_id, job_id, sequence_number, event_type, stage, status,
-                 attempt_number, message, error_code, occurred_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp());
-            """,
-            (
-                job_event_id(tenant_id, job_id, sequence_number), tenant_id, job_id, sequence_number,
-                event_type, stage, status, attempt_number, message[:500] or "event", error_code,
-            ),
-        )
-        return sequence_number
+    def insert_event(self, cursor: "psycopg.Cursor", **kwargs: Any) -> int:
+        return insert_job_event(cursor, **kwargs)
 
     def append_event(self, **kwargs: Any) -> int:
         with self.transaction(kwargs["tenant_id"]) as cursor:
@@ -290,46 +342,6 @@ class OperationsRepository:
         except psycopg.errors.UniqueViolation as error:
             raise IdempotencyRaceError() from error
 
-    def insert_resume_job(
-        self,
-        cursor: "psycopg.Cursor",
-        *,
-        job_id: UUID,
-        tenant_id: UUID,
-        idempotency_key: str,
-        request_fingerprint: str,
-        source_name: str,
-        workflow_id: UUID,
-        batch_id: UUID,
-        document_id: UUID,
-        review_id: UUID,
-        resume_plan_id: UUID,
-        restart_stage: str,
-        created_by: str,
-    ) -> WorkflowJob:
-        """Runs inside the *caller's* resume-command transaction so the
-        handoff, its audit event and the job commit (or roll back) together."""
-
-        cursor.execute(
-            f"""
-            INSERT INTO ap_agent.workflow_jobs
-                (job_id, tenant_id, job_type, idempotency_key, request_fingerprint, source_name,
-                 workflow_id, batch_id, document_id, review_id, resume_plan_id, current_stage, created_by)
-            VALUES (%s, %s, 'RESUME_WORKFLOW', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING {_JOB_COLUMNS};
-            """,
-            (
-                job_id, tenant_id, idempotency_key, request_fingerprint, source_name, workflow_id, batch_id,
-                document_id, review_id, resume_plan_id, restart_stage, created_by,
-            ),
-        )
-        job = _row_to_job(cursor.fetchone())
-        self.insert_event(
-            cursor, tenant_id=tenant_id, job_id=job_id, event_type="JOB_SUBMITTED", status="QUEUED",
-            stage=restart_stage, message=f"Workflow resume queued; restart stage {restart_stage}.",
-        )
-        return job
-
     def get_job(self, tenant_id: UUID, job_id: UUID) -> Optional[WorkflowJob]:
         with self.transaction(tenant_id) as cursor:
             cursor.execute("SET TRANSACTION READ ONLY;")
@@ -376,16 +388,18 @@ class OperationsRepository:
     # Worker
     # ------------------------------------------------------------
 
-    def claim_next_job(self) -> Optional[WorkflowJob]:
+    def claim_next_job(self, *, tenant_id: Optional[UUID] = None) -> Optional[WorkflowJob]:
         """One short transaction: move the oldest `QUEUED` job to `RUNNING`
-        and commit before any expensive work begins."""
+        and commit before any expensive work begins. `tenant_id` optionally
+        scopes the worker to a single tenant (used by tests and the local
+        demo so unrelated queued jobs are never consumed)."""
 
         with self.worker_transaction() as cursor:
             cursor.execute(
                 f"""
                 WITH candidate AS (
                     SELECT job_id, tenant_id FROM ap_agent.workflow_jobs
-                    WHERE status = 'QUEUED'
+                    WHERE status = 'QUEUED' AND (%s::uuid IS NULL OR tenant_id = %s::uuid)
                     ORDER BY created_at ASC
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
@@ -397,7 +411,8 @@ class OperationsRepository:
                 FROM candidate
                 WHERE job.job_id = candidate.job_id AND job.tenant_id = candidate.tenant_id
                 RETURNING {", ".join("job." + c.strip() for c in _JOB_COLUMNS.split(","))};
-                """
+                """,
+                (tenant_id, tenant_id),
             )
             row = cursor.fetchone()
 

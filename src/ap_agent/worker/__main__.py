@@ -75,6 +75,7 @@ def build_runner(config):
         document_executor=document_executor,
         resume_executor=resume_executor,
         settings=config.settings,
+        tenant_scope=config.tenant_scope,
     )
 
 

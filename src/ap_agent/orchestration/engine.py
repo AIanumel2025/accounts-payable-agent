@@ -87,6 +87,8 @@ __all__ = [
     "default_retry_waiter",
     "blocking_retry_waiter",
     "execute_invoice_workflow",
+    "RESUME_REQUIRED_UPSTREAM_STAGES",
+    "resume_invoice_workflow",
 ]
 
 
@@ -547,7 +549,31 @@ def execute_invoice_workflow(
         message="Invoice workflow started.",
     )
 
-    stage = OrchestrationStage.INGESTION
+    return _run_stage_loop(
+        context=context,
+        handler_registry=handler_registry,
+        config=config,
+        retry_waiter=retry_waiter,
+        start_stage=OrchestrationStage.INGESTION,
+    )
+
+
+# ------------------------------------------------------------
+# Shared stage loop (M11D Core: extracted, unchanged, from the body of
+# `execute_invoice_workflow` so a resumed workflow runs exactly the same
+# routing, retry and structured-failure handling as a fresh one).
+# ------------------------------------------------------------
+
+
+def _run_stage_loop(
+    *,
+    context: WorkflowExecutionContext,
+    handler_registry: StageHandlerRegistry,
+    config: OrchestrationConfig,
+    retry_waiter: RetryWaiter,
+    start_stage: OrchestrationStage,
+) -> InvoiceWorkflowResult:
+    stage = start_stage
 
     while stage in ORCHESTRATION_PROCESSING_ORDER:
         context.current_stage = stage
@@ -768,3 +794,82 @@ def execute_invoice_workflow(
             break
 
     raise AssertionError("Workflow exited the processing graph without a terminal result.")
+
+
+# ------------------------------------------------------------
+# Resume entry point (M11D Core)
+#
+# A workflow resumed after human review must *genuinely* begin at the plan's
+# restart stage: it is handed explicitly hydrated upstream results, validates
+# that every required one is present, emits `WORKFLOW_RESUMED`, and then runs
+# only the restart stage and the stages after it through the same loop as a
+# fresh run. Nothing upstream of the restart stage executes.
+# ------------------------------------------------------------
+
+RESUME_REQUIRED_UPSTREAM_STAGES: dict[OrchestrationStage, tuple[OrchestrationStage, ...]] = {
+    OrchestrationStage.FINANCIAL_VALIDATION: (OrchestrationStage.NORMALIZATION,),
+    OrchestrationStage.REFERENCE_MATCHING: (
+        OrchestrationStage.NORMALIZATION,
+        OrchestrationStage.FINANCIAL_VALIDATION,
+    ),
+    OrchestrationStage.MEMORY_PERSISTENCE: (
+        OrchestrationStage.NORMALIZATION,
+        OrchestrationStage.FINANCIAL_VALIDATION,
+        OrchestrationStage.REFERENCE_MATCHING,
+    ),
+}
+
+
+def resume_invoice_workflow(
+    request: InvoiceWorkflowRequest,
+    handler_registry: StageHandlerRegistry,
+    config: OrchestrationConfig,
+    *,
+    restart_stage: OrchestrationStage,
+    upstream_results: dict[OrchestrationStage, Any],
+    retry_waiter: RetryWaiter = default_retry_waiter,
+    event_sink: Optional[Callable[[OrchestrationEvent], None]] = None,
+) -> InvoiceWorkflowResult:
+    required = RESUME_REQUIRED_UPSTREAM_STAGES.get(restart_stage)
+
+    if required is None:
+        raise ValueError(f"{getattr(restart_stage, 'value', restart_stage)!r} is not a valid resume restart stage.")
+
+    missing = [stage.value for stage in required if upstream_results.get(stage) is None]
+
+    if missing:
+        raise ValueError(f"Resume at {restart_stage.value} requires upstream results for: {', '.join(missing)}.")
+
+    unexpected = sorted(stage.value for stage in upstream_results if stage not in required)
+
+    if unexpected:
+        raise ValueError(f"Resume at {restart_stage.value} must not be given: {', '.join(unexpected)}.")
+
+    context = WorkflowExecutionContext(
+        request=request,
+        config=config,
+        started_at=orchestration_utc_now(),
+        current_stage=restart_stage,
+        event_sink=event_sink,
+    )
+
+    for upstream_stage in required:
+        result = upstream_results[upstream_stage]
+        register_result_document_identity(context=context, result=result)
+        context.stage_results[upstream_stage] = result
+
+    append_orchestration_event(
+        context=context,
+        event_type=OrchestrationEventType.WORKFLOW_RESUMED,
+        stage=restart_stage,
+        status=InvoiceWorkflowStatus.IN_PROGRESS.value,
+        message=f"Workflow resumed at {restart_stage.value}.",
+    )
+
+    return _run_stage_loop(
+        context=context,
+        handler_registry=handler_registry,
+        config=config,
+        retry_waiter=retry_waiter,
+        start_stage=restart_stage,
+    )

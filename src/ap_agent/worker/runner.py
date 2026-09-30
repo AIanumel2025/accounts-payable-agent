@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 from typing import Optional, Protocol
+from uuid import UUID
 
 from ap_agent.models.operations import WorkerSettings, WorkflowJob, WorkflowJobStatus, WorkflowJobType
 from ap_agent.repositories.operations_repository import JobStateError, OperationsRepository
@@ -34,6 +35,7 @@ class WorkerRunner:
         document_executor: JobExecutor,
         resume_executor: JobExecutor,
         settings: Optional[WorkerSettings] = None,
+        tenant_scope: Optional[UUID] = None,
     ) -> None:
         self._operations = operations
         self._executors = {
@@ -41,12 +43,13 @@ class WorkerRunner:
             WorkflowJobType.RESUME_WORKFLOW: resume_executor,
         }
         self._settings = settings or WorkerSettings()
+        self._tenant_scope = tenant_scope
 
     def run_once(self) -> Optional[WorkflowJob]:
         """Claim and run at most one job. Returns the finished job, or
         `None` when the queue is empty."""
 
-        job = self._operations.claim_next_job()
+        job = self._operations.claim_next_job(tenant_id=self._tenant_scope)
 
         if job is None:
             return None

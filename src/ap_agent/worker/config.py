@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
+from uuid import UUID
 
 from ap_agent.models.operations import WorkerSettings
 
@@ -20,6 +22,7 @@ __all__ = [
     "PHASE_ARTIFACT_ROOT_ENVIRONMENT_VARIABLE",
     "REFERENCE_DATA_ENVIRONMENT_VARIABLE",
     "OCR_PROVIDER_ENVIRONMENT_VARIABLE",
+    "TENANT_SCOPE_ENVIRONMENT_VARIABLE",
     "WorkerConfigurationError",
     "WorkerConfig",
     "load_worker_config",
@@ -30,6 +33,7 @@ ARTIFACT_ROOT_ENVIRONMENT_VARIABLE = "AP_AGENT_ARTIFACT_ROOT"
 PHASE_ARTIFACT_ROOT_ENVIRONMENT_VARIABLE = "AP_AGENT_PHASE_ARTIFACT_ROOT"
 REFERENCE_DATA_ENVIRONMENT_VARIABLE = "AP_AGENT_REFERENCE_DATA_DIRECTORY"
 OCR_PROVIDER_ENVIRONMENT_VARIABLE = "AP_AGENT_WORKER_OCR_PROVIDER"
+TENANT_SCOPE_ENVIRONMENT_VARIABLE = "AP_AGENT_WORKER_TENANT_ID"
 
 SUPPORTED_OCR_PROVIDERS = ("paddleocr", "tesseract")
 
@@ -47,6 +51,8 @@ class WorkerConfig:
     phase_artifact_root: Path
     reference_data_directory: Path
     ocr_provider: str = "paddleocr"
+    # Optional: serve a single tenant only (tests/demo). Unset in production.
+    tenant_scope: Optional[UUID] = None
     settings: WorkerSettings = field(default_factory=WorkerSettings)
 
 
@@ -73,7 +79,15 @@ def load_worker_config(environment: dict[str, str] | None = None) -> WorkerConfi
     if provider not in SUPPORTED_OCR_PROVIDERS:
         raise WorkerConfigurationError(f"{OCR_PROVIDER_ENVIRONMENT_VARIABLE} must be one of {SUPPORTED_OCR_PROVIDERS}.")
 
+    scope_text = env.get(TENANT_SCOPE_ENVIRONMENT_VARIABLE, "").strip()
+
+    try:
+        tenant_scope = UUID(scope_text) if scope_text else None
+    except ValueError as error:
+        raise WorkerConfigurationError(f"{TENANT_SCOPE_ENVIRONMENT_VARIABLE} must be a UUID.") from error
+
     return WorkerConfig(
+        tenant_scope=tenant_scope,
         execution_enabled=enabled,
         artifact_root=artifact_root,
         phase_artifact_root=phase_root,
