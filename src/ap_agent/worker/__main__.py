@@ -101,7 +101,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_DISABLED
 
-    runner = build_runner(config)
+    from ap_agent.exceptions import PostgresConfigurationError
+
+    try:
+        runner = build_runner(config)
+    except PostgresConfigurationError as error:
+        # The message names the variable, never its value.
+        print(f"worker: database configuration error: {error}", file=sys.stderr)
+        return EXIT_CONFIGURATION
 
     if arguments.once:
         finished = runner.run_once()
