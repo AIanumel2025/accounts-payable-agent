@@ -12,6 +12,11 @@ export const FRONTEND_ROOT = path.dirname(path.dirname(path.dirname(fileURLToPat
 export const REPO_ROOT = path.dirname(FRONTEND_ROOT);
 export const PYTHON_BIN = process.env.AP_AGENT_PYTHON_BIN ?? "python3";
 export const MANAGE_TENANT_SCRIPT = path.join(REPO_ROOT, "scripts", "manage_m11c_tenant.py");
+export const MANAGE_M11D_SCRIPT = path.join(REPO_ROOT, "scripts", "manage_m11d_tenant.py");
+// Controlled reference data for the demo/acceptance worker. Test data only: production
+// configures its own directory through AP_AGENT_REFERENCE_DATA_DIRECTORY.
+export const REFERENCE_DATA_DIRECTORY = path.join(REPO_ROOT, "tests", "fixtures", "reference_data");
+export const FIXTURE_INVOICES_DIRECTORY = path.join(REPO_ROOT, "tests", "fixtures", "invoices");
 export const REQUIRED_DATABASE = "ap_agent_m8_test";
 
 /** Fail closed unless `AP_AGENT_TEST_POSTGRES_DSN` is set and names exactly `ap_agent_m8_test`. Never prints the DSN. */
@@ -124,7 +129,7 @@ export async function cleanupTenants(testDsn, tenantIds) {
   if (exitCode !== 0) console.warn(`Cleanup exited with code ${exitCode}; the tenants' data is isolated and inert either way.`);
 }
 
-export function startFastApi({ port, runtimeDsn, writes }) {
+export function startFastApi({ port, runtimeDsn, writes, operations = false, artifactRoot = null }) {
   return spawnProcess(
     PYTHON_BIN,
     ["-m", "uvicorn", "ap_agent.api.app:create_app", "--factory", "--host", "127.0.0.1", "--port", String(port), "--log-level", "warning"],
@@ -136,12 +141,15 @@ export function startFastApi({ port, runtimeDsn, writes }) {
         PYTHONPATH: path.join(REPO_ROOT, "src"),
         // Writes are enabled explicitly, per process, only for the isolated test tenant (M11C task §30).
         AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES: writes ? "true" : "false",
+        // M11D Core: operations are enabled explicitly, per process, only for an isolated run.
+        AP_AGENT_ENABLE_OPERATIONS: operations ? "true" : "false",
+        ...(operations && artifactRoot ? { AP_AGENT_ARTIFACT_ROOT: artifactRoot } : {}),
       },
     },
   );
 }
 
-export function startNext({ port, apiPort, tenantId, actorId, role, mode }) {
+export function startNext({ port, apiPort, tenantId, actorId, role, mode, operations = false }) {
   return spawnProcess("npm", ["run", "start", "--", "--port", String(port)], {
     cwd: FRONTEND_ROOT,
     env: {
@@ -152,7 +160,49 @@ export function startNext({ port, apiPort, tenantId, actorId, role, mode }) {
       AP_AGENT_DEV_ACTOR_ID: actorId,
       AP_AGENT_DEV_ACTOR_ROLE: role,
       AP_AGENT_FRONTEND_REVIEW_COMMAND_MODE: mode,
+      AP_AGENT_FRONTEND_OPERATIONS_MODE: operations ? "enabled" : "disabled",
       NEXT_TELEMETRY_DISABLED: "1",
     },
   });
+}
+
+/** The single M11D Core worker process (continuous polling), scoped to one isolated tenant. Explicitly enabled for this child only. */
+export function startWorker({ runtimeDsn, tenantId, artifactRoot, ocrProvider }) {
+  return spawnProcess(PYTHON_BIN, ["-m", "ap_agent.worker"], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      AP_AGENT_POSTGRES_DSN: runtimeDsn,
+      PYTHONPATH: path.join(REPO_ROOT, "src"),
+      AP_AGENT_ENABLE_WORKER_EXECUTION: "true",
+      AP_AGENT_ARTIFACT_ROOT: artifactRoot,
+      AP_AGENT_REFERENCE_DATA_DIRECTORY: REFERENCE_DATA_DIRECTORY,
+      AP_AGENT_WORKER_TENANT_ID: tenantId,
+      AP_AGENT_WORKER_OCR_PROVIDER: ocrProvider,
+      // The worker never needs the owner DSN.
+      AP_AGENT_TEST_POSTGRES_DSN: "",
+    },
+  });
+}
+
+/** Seeds via `scripts/manage_m11d_tenant.py seed`; the state file holds a live least-privilege credential, so it is read once and deleted. */
+export async function seedM11dTenant(testDsn, { otherTenant = false } = {}) {
+  const workDir = mkdtempSync(path.join(tmpdir(), "ap-agent-m11d-"));
+  const outputPath = path.join(workDir, "state.json");
+  try {
+    const args = [MANAGE_M11D_SCRIPT, "seed", "--output", outputPath, ...(otherTenant ? ["--other-tenant"] : [])];
+    const exitCode = await runOnceAndWait(PYTHON_BIN, args, { cwd: REPO_ROOT, env: { ...process.env, AP_AGENT_TEST_POSTGRES_DSN: testDsn } });
+    if (exitCode !== 0) throw new Error(`Seeding the M11D tenant failed (exit code ${exitCode}).`);
+    const state = JSON.parse(readFileSync(outputPath, "utf-8"));
+    if (!state.tenant_id || !state.runtime_dsn) throw new Error("Seed output is missing tenant_id/runtime_dsn.");
+    return state;
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
+}
+
+export async function cleanupM11dTenants(testDsn, tenantIds) {
+  const args = [MANAGE_M11D_SCRIPT, "cleanup", ...tenantIds.flatMap((id) => ["--tenant-id", id])];
+  const exitCode = await runOnceAndWait(PYTHON_BIN, args, { cwd: REPO_ROOT, env: { ...process.env, AP_AGENT_TEST_POSTGRES_DSN: testDsn } });
+  if (exitCode !== 0) console.warn(`Cleanup exited with code ${exitCode}; the tenants' data is isolated and inert either way.`);
 }

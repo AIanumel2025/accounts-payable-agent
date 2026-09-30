@@ -38,6 +38,8 @@ export interface ReviewActionWorkspaceProps {
   roleLabel: string;
   frontendMode: "disabled" | "validation_only" | "commit";
   evidenceSuggestions: Record<string, string[]>;
+  /** M11D Core: a worker job consumes the resume handoff (operations mode enabled and agreeing). */
+  operationsEnabled?: boolean;
   /** Re-reads authoritative server state (Next.js `router.refresh()` in production). */
   onRefresh: () => void;
   /** Injectable for tests; defaults to the real same-origin POST. */
@@ -157,7 +159,7 @@ export function ReviewActionWorkspace(props: ReviewActionWorkspaceProps) {
 
       <ModeBanner state={state} frontendMode={frontendMode} />
 
-      <CommandResultBanner ref={resultRef} state={commandState} refreshRequired={refreshRequired} onRefresh={onRefresh} />
+      <CommandResultBanner ref={resultRef} state={commandState} refreshRequired={refreshRequired} onRefresh={onRefresh} operationsEnabled={props.operationsEnabled ?? false} />
 
       {refreshRequired ? (
         <p className={styles.note} role="note" data-testid="refresh-required">
@@ -258,6 +260,7 @@ export function ReviewActionWorkspace(props: ReviewActionWorkspaceProps) {
 
       {state.kind === "ready" && capabilities && frontendMode === "commit" && (capabilities.resume.disposition === "APPROVED" || capabilities.resume.disposition === "CORRECTED") ? (
         <ResumePanel
+          operationsEnabled={props.operationsEnabled ?? false}
           capabilities={capabilities}
           eligible={state.actions.includes("RESUME_WORKFLOW")}
           locked={locked}
@@ -472,6 +475,7 @@ function ReadyControls(props: {
 }
 
 function ResumePanel(props: {
+  operationsEnabled: boolean;
   capabilities: CommandCapabilitiesPayload;
   eligible: boolean;
   locked: boolean;
@@ -484,9 +488,15 @@ function ResumePanel(props: {
   return (
     <div className={styles.panel} data-testid="resume-panel">
       <h3 className={styles.legend}>Workflow resume</h3>
-      <p className={styles.note}>
-        Requesting a resume creates a <strong>controlled handoff only</strong>. It selects the restart stage and a derived version; it does not run the remaining pipeline.
-      </p>
+      {props.operationsEnabled ? (
+        <p className={styles.note}>
+          Requesting a resume records the restart stage and a derived version and <strong>queues a worker job</strong>. The request itself does not run the pipeline; follow the job below once it is queued.
+        </p>
+      ) : (
+        <p className={styles.note}>
+          Requesting a resume creates a <strong>controlled handoff only</strong>. It selects the restart stage and a derived version; it does not run the remaining pipeline.
+        </p>
+      )}
       {eligible ? (
         <>
           <ReasonCodePicker legend="Reason codes (required)" options={RESUME_REASON_CODES} selected={props.reasons} onChange={props.onReasonsChange} idPrefix="resume-reasons" />

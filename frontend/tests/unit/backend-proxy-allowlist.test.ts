@@ -53,4 +53,28 @@ describe("matchAllowedPath (M11B task §5)", () => {
     expect(matchAllowedPath(["api", "v1"])).toBeNull();
     expect(matchAllowedPath(["api"])).toBeNull();
   });
+
+  // M11D Core: read-only operations paths (exact shapes, gated by the operations mode in the GET handler).
+  it("allows the job list with its supported filters, flagged as an operations path", () => {
+    expect(matchAllowedPath(["api", "v1", "operations", "jobs"])).toEqual({
+      allowedQueryParams: new Set(["page", "page_size", "status", "job_type", "review_case_id"]),
+      requiresOperations: true,
+    });
+  });
+
+  it("allows a job detail path with a valid UUID only", () => {
+    expect(matchAllowedPath(["api", "v1", "operations", "jobs", VALID_UUID])).toEqual({
+      allowedQueryParams: new Set(),
+      requiresOperations: true,
+    });
+    expect(matchAllowedPath(["api", "v1", "operations", "jobs", "not-a-uuid"])).toBeNull();
+    expect(matchAllowedPath(["api", "v1", "operations", "jobs", ".."])).toBeNull();
+  });
+
+  it("never exposes the submission endpoint or job sub-paths through the read-only proxy", () => {
+    expect(matchAllowedPath(["api", "v1", "operations", "submissions"])).toBeNull();
+    expect(matchAllowedPath(["api", "v1", "operations"])).toBeNull();
+    expect(matchAllowedPath(["api", "v1", "operations", "jobs", VALID_UUID, "events"])).toBeNull();
+    expect(matchAllowedPath(["api", "v1", "operations", "jobs", VALID_UUID, "cancel"])).toBeNull();
+  });
 });

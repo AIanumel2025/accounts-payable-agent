@@ -61,3 +61,14 @@ export type CommittedCommandPayload = components["schemas"]["CommandResultRespon
 export type WorkflowResumePayload = components["schemas"]["WorkflowResumeResponse"];
 export type ApiErrorEnvelopePayload = components["schemas"]["ApiErrorEnvelope"];
 export type ReviewActionValue = components["schemas"]["ReviewAction"];
+
+// M11D Core: operations console (aliases into the generated contract).
+export type HealthOperationsMode = HealthPayload["operations_mode"];
+export type JobPayload = components["schemas"]["JobResponse"];
+export type JobSummaryPayload = components["schemas"]["JobSummaryResponse"];
+export type JobEventPayload = components["schemas"]["JobEventResponse"];
+export type JobDetailPayload = components["schemas"]["JobDetailResponse"];
+export type JobListPayload = components["schemas"]["JobListResponse"];
+export type SubmissionPayload = components["schemas"]["SubmissionResponse"];
+export type JobStatusValue = JobPayload["status"];
+export type JobTypeValue = JobPayload["job_type"];

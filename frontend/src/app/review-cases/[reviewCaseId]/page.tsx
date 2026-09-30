@@ -6,8 +6,11 @@ import { ReviewActions } from "@/components/review-actions/ReviewActions";
 import { ErrorState } from "@/components/feedback/ErrorState";
 import { getBackendHealth } from "@/lib/api/dashboard";
 import { getCommandCapabilities } from "@/lib/api/command-capabilities";
+import { listJobs } from "@/lib/api/operations";
 import { getReviewCaseDetail } from "@/lib/api/review-cases";
 import { loadCommandMode } from "@/lib/config/command-mode";
+import { loadOperationsMode, operationsModesAgree } from "@/lib/config/operations-mode";
+import { ResumeJobPanelLive } from "@/components/operations/ResumeJobPanelLive";
 import { deriveWorkspaceState, roleLabel } from "@/lib/commands/presentation";
 import { issueCsrfToken } from "@/lib/server/csrf";
 import { parseSafeReturnTo } from "@/lib/api/review-queue-query";
@@ -56,6 +59,14 @@ export default async function ReviewCaseDetailPage({
     getBackendHealth(),
     actionsEnabled ? getCommandCapabilities(reviewCaseId) : Promise.resolve(null),
   ]);
+
+  // M11D Core: the operations panel only appears when both sides agree it is enabled.
+  const operationsMode = loadOperationsMode();
+  const operationsEnabled =
+    operationsMode.valid &&
+    healthResult.ok &&
+    operationsModesAgree(operationsMode.mode, healthResult.data.operations_mode);
+  const jobsResult = operationsEnabled && detailResult.ok ? await listJobs({ reviewCaseId }) : null;
 
   const checkedAtIso = new Date().toISOString();
   const backendHealth: BackendHealthState = healthResult.ok
@@ -107,7 +118,17 @@ export default async function ReviewCaseDetailPage({
               roleLabel={roleLabel(capabilities?.actor_role ?? actorRole)}
               frontendMode={commandMode.valid ? commandMode.mode : "disabled"}
               evidenceSuggestions={evidenceSuggestions}
+              operationsEnabled={operationsEnabled}
             />
+            {operationsEnabled && jobsResult !== null && jobsResult.ok ? (
+              // Keyed by the jobs' identity and state so a server refresh (after a resume request) remounts the
+              // panel with the new jobs instead of keeping the state it was first mounted with.
+              <ResumeJobPanelLive
+                key={jobsResult.data.items.map((job) => `${job.job_id}:${job.status}`).join("|")}
+                reviewCaseId={reviewCaseId}
+                initialJobs={jobsResult.data.items}
+              />
+            ) : null}
             <DetailBody detail={detailResult.data} />
           </>
         )}

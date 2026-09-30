@@ -7,6 +7,7 @@ const config = [
       ".next/**",
       "node_modules/**",
       "playwright-report/**",
+      "playwright-report-*/**",
       "test-results/**",
       "src/types/api.generated.ts",
       "coverage/**",

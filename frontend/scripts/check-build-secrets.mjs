@@ -34,6 +34,12 @@ const FORBIDDEN_PATTERNS = [
   { name: "AP_AGENT_FRONTEND_CSRF_SECRET variable name", pattern: /AP_AGENT_FRONTEND_CSRF_SECRET/ },
   { name: "AP_AGENT_DEV_* variable name", pattern: /AP_AGENT_DEV_(?:TENANT_ID|ACTOR_ID|ACTOR_ROLE)/ },
   { name: "AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES variable name", pattern: /AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES/ },
+  // M11D Core: operations/worker/artifact configuration is server-only.
+  { name: "AP_AGENT_FRONTEND_OPERATIONS_MODE variable name", pattern: /AP_AGENT_FRONTEND_OPERATIONS_MODE/ },
+  { name: "AP_AGENT_ENABLE_OPERATIONS variable name", pattern: /AP_AGENT_ENABLE_OPERATIONS/ },
+  { name: "AP_AGENT_ENABLE_WORKER_EXECUTION variable name", pattern: /AP_AGENT_ENABLE_WORKER_EXECUTION/ },
+  { name: "AP_AGENT_ARTIFACT_ROOT variable name", pattern: /AP_AGENT_ARTIFACT_ROOT/ },
+  { name: "artifact:// reference", pattern: /artifact:\/\/[0-9a-f]{32}/ },
   { name: "development actor id (M11C acceptance/demo)", pattern: /real-reviewer-[ab]|demo-reviewer/ },
 ];
 
