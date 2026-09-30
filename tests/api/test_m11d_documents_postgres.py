@@ -175,6 +175,13 @@ def test_real_tesseract_ocr_review_then_approve_and_resume(client, db, runtime_d
          "matching_result": matching, "matched_reference_data": reference}
     )
     assert db.workflow(finished.workflow_id)[:3] == ("HUMAN_REVIEW", "REVIEW_REQUIRED", True)
+    # The review queue shows the uploaded file's name (workflow display name), while the
+    # append-only memory record keeps the pipeline's own preserved-copy name.
+    assert [item["source_name"] for item in queue["items"]] == [FLAT_PNG.name]
+    assert db.query(
+        "SELECT source_name FROM ap_agent.invoice_memory_records WHERE tenant_id = %s AND workflow_id = %s;",
+        (tenant_id, finished.workflow_id),
+    )[0][0].startswith("original")
     original_before = db.original_memory(finished.workflow_id)
 
     # Approve and resume the *real* pipeline-created case.

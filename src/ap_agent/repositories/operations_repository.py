@@ -635,11 +635,18 @@ class OperationsRepository:
         tenant_id: UUID,
         workflow_id: UUID,
         review_required: bool,
+        display_name: Optional[str] = None,
     ) -> int:
         """Move a workflow to its settled state once the pipeline ended:
         `HUMAN_REVIEW`/`REVIEW_REQUIRED` (so the M11C claim/decide/resume
         chain applies) or `COMPLETED`/`SUCCEEDED`. The row is locked; the
-        revision advances by one."""
+        revision advances by one.
+
+        `display_name` (upload jobs) replaces the workflow's `source_name`, which
+        the ingestion tool sets to its preserved-copy name (`original.<ext>`),
+        with the uploaded file's validated name so the review queue shows
+        something a person recognises. Presentation only: the append-only
+        memory record keeps the pipeline's own name."""
 
         cursor.execute(
             """
@@ -658,10 +665,11 @@ class OperationsRepository:
                 UPDATE ap_agent.workflow_instances
                 SET current_phase = 'HUMAN_REVIEW', current_status = 'REVIEW_REQUIRED',
                     review_required = TRUE, completed_at = NULL,
+                    source_name = COALESCE(%s, source_name),
                     lock_version = lock_version + 1, updated_at = transaction_timestamp()
                 WHERE tenant_id = %s AND workflow_id = %s RETURNING lock_version;
                 """,
-                (tenant_id, workflow_id),
+                (display_name, tenant_id, workflow_id),
             )
         else:
             cursor.execute(
@@ -669,10 +677,11 @@ class OperationsRepository:
                 UPDATE ap_agent.workflow_instances
                 SET current_phase = 'COMPLETED', current_status = 'SUCCEEDED',
                     review_required = FALSE, completed_at = transaction_timestamp(),
+                    source_name = COALESCE(%s, source_name),
                     lock_version = lock_version + 1, updated_at = transaction_timestamp()
                 WHERE tenant_id = %s AND workflow_id = %s RETURNING lock_version;
                 """,
-                (tenant_id, workflow_id),
+                (display_name, tenant_id, workflow_id),
             )
 
         return int(cursor.fetchone()[0])

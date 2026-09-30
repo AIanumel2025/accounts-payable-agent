@@ -149,7 +149,7 @@ class DocumentJobExecutor:
             with self._operations.transaction(job.tenant_id) as cursor:
                 self._operations.finalize_workflow_state(
                     cursor, tenant_id=job.tenant_id, workflow_id=stored.workflow_memory_id,
-                    review_required=review_required,
+                    review_required=review_required, display_name=job.source_name,
                 )
                 review_id = find_review_case_id(cursor, job.tenant_id, stored.workflow_memory_id)
                 summary = build_process_summary(result)

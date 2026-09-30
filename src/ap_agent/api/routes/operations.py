@@ -89,6 +89,22 @@ def _envelope(status: str, data: dict) -> ApiEnvelope:
     response_model=ApiEnvelope[SubmissionResponse],
     responses=_ERROR_RESPONSES,
     dependencies=[Depends(require_operations_enabled)],
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "description": "One supported invoice file (PDF, PNG or JPEG). No other form field is accepted.",
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file"],
+                        "additionalProperties": False,
+                        "properties": {"file": {"type": "string", "format": "binary"}},
+                    }
+                }
+            },
+        }
+    },
 )
 async def submit_invoice(
     request: Request,
