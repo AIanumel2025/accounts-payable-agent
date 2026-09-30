@@ -1,7 +1,8 @@
-name: M11A/M11B/M11C frontend
+name: M11A/M11B/M11C/M11D frontend
 
-# Dedicated to the M11A/M11B/M11C human-review frontend (M11A task brief §18,
-# extended in place by M11B task §19/§20 and again by M11C task §30 --
+# Dedicated to the M11A/M11B/M11C/M11D human-review and operations frontend
+# (M11A task brief §18, extended in place by M11B task §19/§20, by M11C task
+# §30 and by M11D Core (upload, worker, resume)) --
 # "extend the EXISTING M11 frontend CI workflow (not duplicate)" -- rather
 # than a second, parallel workflow file). Runs only when frontend code, the API contract it is
 # generated from, or the backend routes/schemas it exercises could have
@@ -27,6 +28,17 @@ on:
       - "src/ap_agent/models/interface.py"
       - "src/ap_agent/models/orchestration.py"
       - "src/ap_agent/models/memory.py"
+      # M11D Core: queue, worker, upload, resume execution and their schema.
+      - "src/ap_agent/models/operations.py"
+      - "src/ap_agent/repositories/operations_repository.py"
+      - "src/ap_agent/worker/**"
+      - "src/ap_agent/orchestration/**"
+      - "src/ap_agent/serialization/**"
+      - "src/ap_agent/artifacts/**"
+      - "src/ap_agent/db/**"
+      - "scripts/manage_m11d_tenant.py"
+      - "tests/unit/test_m11d_*.py"
+      - "tests/support/**"
       - "src/ap_agent/services/review_queries.py"
       - "src/ap_agent/repositories/review_repository.py"
       - "src/ap_agent/repositories/postgres_memory_repository.py"
@@ -107,6 +119,13 @@ jobs:
           tests/unit/test_review_commands_policy.py tests/unit/test_review_decisions.py
           tests/unit/test_workflow_resume_policy.py tests/unit/test_review_capabilities.py
           tests/unit/test_api_errors.py tests/unit/test_api_dependencies.py
+
+      # M11D Core: unit tests with no database -- upload validation, artifact
+      # storage, the engine resume entry point, typed hydration and the
+      # correction overlay (real Phase 4/5/6 tools, no OCR).
+      - name: M11D unit tests (no database)
+        working-directory: .
+        run: python -m pytest -v -m "not requires_postgres" tests/unit/test_m11d_*.py
 
       - name: Unit and component tests
         run: npm run test
@@ -190,11 +209,17 @@ jobs:
             exit 1
           fi
 
-      - name: Install ap_agent (api + postgres + dev extras)
+      # M11D Core: the real-stack job also runs the worker against real OCR, so it
+      # needs the image/PDF extras and the Tesseract system binary (the worker's
+      # `tesseract` provider is real Tesseract via the Phase 3 fallback router).
+      - name: Install ap_agent (api + postgres + dev + OCR extras)
         working-directory: .
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[api,postgres,dev]"
+          pip install -e ".[api,postgres,dev,preprocessing,pdf,ocr-tesseract]"
+
+      - name: Install Tesseract OCR system binary
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
 
       - name: Install frontend dependencies
         run: npm ci
@@ -230,7 +255,10 @@ jobs:
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
         working-directory: .
-        run: python -m pytest -v tests/api/ tests/unit/test_api_schemas.py --ignore=tests/api/test_review_api_uvicorn.py
+        run: >-
+          python -m pytest -v tests/api/ tests/unit/test_api_schemas.py
+          --ignore=tests/api/test_review_api_uvicorn.py
+          --ignore=tests/api/test_m11d_paddle_worker_postgres.py
 
       # M11A task §15, extended by M11B task §18 to also seed and assert
       # against the three named review-case detail fixtures: the real
@@ -272,4 +300,39 @@ jobs:
         with:
           name: playwright-report-real-actions
           path: frontend/playwright-report-real-actions/
+          retention-days: 14
+
+      # M11D Core: the durable operations path against the real database --
+      # upload control plane, worker (real Tesseract), resume execution from the
+      # recorded restart stage, derived versions, integrity tampering, claim
+      # exclusivity, worker-scope RLS and the worker CLI. The real-PaddleOCR
+      # worker test (tests/api/test_m11d_paddle_worker_postgres.py) runs in the
+      # OCR-capable `m8-postgres-acceptance.yml` job, not here.
+      - name: M11D -- real-PostgreSQL control-plane, worker and resume tests
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+        working-directory: .
+        run: >-
+          python -m pytest -v
+          tests/api/test_m11d_operations_postgres.py
+          tests/api/test_m11d_documents_postgres.py
+          tests/api/test_m11d_resume_postgres.py
+
+      # M11D Core: browser -> Next.js -> FastAPI -> PostgreSQL -> ONE separate
+      # worker process. Operations and review-command writes are enabled only in
+      # this script's child processes (never committed as a default); the worker
+      # is enabled for its own child only and scoped to the isolated tenant; the
+      # DSN reaches only the Python helpers. OCR provider: real Tesseract.
+      - name: M11D -- run real FastAPI + worker + PostgreSQL + Next.js acceptance
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+          AP_AGENT_WORKER_OCR_PROVIDER: tesseract
+        run: npm run test:e2e:real-operations
+
+      - name: Upload M11D real-operations Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-real-operations
+          path: frontend/playwright-report-real-operations/
           retention-days: 14
