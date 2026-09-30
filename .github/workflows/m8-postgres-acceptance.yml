@@ -62,7 +62,8 @@ jobs:
       github.event_name != 'pull_request' ||
       github.head_ref == 'claude/m8-phase-7-postgres-memory' ||
       github.head_ref == 'claude/m9-phase-8-orchestration' ||
-      github.head_ref == 'claude/sharp-brahmagupta-ec6k5e'
+      github.head_ref == 'claude/sharp-brahmagupta-ec6k5e' ||
+      github.head_ref == 'claude/nice-faraday-m46tqu'
     runs-on: ubuntu-latest
     # Generous headroom for a cold run: paddlepaddle's wheel alone is
     # several hundred MB, and PP-OCRv6's detection/recognition/orientation/
@@ -73,7 +74,10 @@ jobs:
     # in run 36249880424, then the full unfiltered regression below, which
     # re-exercises the same real-PaddleOCR/real-Postgres tests plus the
     # rest of the fast suite), so the budget is doubled with margin.
-    timeout-minutes: 90
+    # M11D adds real-PostgreSQL and real-OCR worker tests that are slow against
+    # the remote database; they run exactly once, in the full regression below
+    # (the two earlier steps skip them), and the budget is raised accordingly.
+    timeout-minutes: 180
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -168,7 +172,7 @@ jobs:
       - name: Run Phase 9 (M10) API tests
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
-        run: pytest tests/api -vv
+        run: pytest tests/api -vv --ignore-glob='tests/api/test_m11d_*'
 
       # M10 task brief §17/§20: the repository/service-level real-PostgreSQL
       # suite (migrations already applied by the step above; this includes
@@ -181,7 +185,7 @@ jobs:
       - name: Run PostgreSQL acceptance suite
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
-        run: pytest -m requires_postgres -vv
+        run: pytest -m requires_postgres -vv --ignore-glob='tests/api/test_m11d_*'
 
       # M9 task brief §20 step 9 / hotfix follow-up: with both real
       # providers now available in this job, run the complete, unfiltered

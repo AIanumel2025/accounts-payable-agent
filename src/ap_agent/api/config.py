@@ -15,12 +15,18 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
 from uuid import UUID
+
+from ap_agent.models.operations import UploadLimits
 
 __all__ = [
     "ENABLE_REVIEW_COMMAND_WRITES_ENVIRONMENT_VARIABLE",
     "CORS_ALLOWED_ORIGINS_ENVIRONMENT_VARIABLE",
     "ALLOWED_TENANT_IDS_ENVIRONMENT_VARIABLE",
+    "ENABLE_OPERATIONS_ENVIRONMENT_VARIABLE",
+    "ARTIFACT_ROOT_ENVIRONMENT_VARIABLE",
     "ApiConfig",
     "load_api_config",
 ]
@@ -29,6 +35,10 @@ __all__ = [
 ENABLE_REVIEW_COMMAND_WRITES_ENVIRONMENT_VARIABLE = "AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES"
 CORS_ALLOWED_ORIGINS_ENVIRONMENT_VARIABLE = "AP_AGENT_API_CORS_ORIGINS"
 ALLOWED_TENANT_IDS_ENVIRONMENT_VARIABLE = "AP_AGENT_API_ALLOWED_TENANT_IDS"
+# M11D Core: independent of the review-command write switch above; neither
+# implies the other.
+ENABLE_OPERATIONS_ENVIRONMENT_VARIABLE = "AP_AGENT_ENABLE_OPERATIONS"
+ARTIFACT_ROOT_ENVIRONMENT_VARIABLE = "AP_AGENT_ARTIFACT_ROOT"
 
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
@@ -64,11 +74,20 @@ class ApiConfig:
     # tenant then fails closed with `TenantAccessDeniedError` (HTTP 403).
     allowed_tenant_ids: tuple[UUID, ...] = field(default_factory=tuple)
 
+    # M11D Core: the operations console (upload + job queue reads). Default
+    # `False`; enabling requires a server-side artifact root.
+    enable_operations: bool = False
+    artifact_root: Optional[Path] = None
+    upload_limits: UploadLimits = field(default_factory=UploadLimits)
+
     def __post_init__(self) -> None:
         assert self.api_version.strip()
         assert self.api_prefix.startswith("/")
         assert self.request_timeout_seconds > 0
         assert "*" not in self.cors_allow_origins, "CORS origins must not include a wildcard."
+        assert not self.enable_operations or self.artifact_root is not None, (
+            "Enabling operations requires an artifact root."
+        )
 
 
 def load_api_config() -> ApiConfig:
@@ -86,7 +105,14 @@ def load_api_config() -> ApiConfig:
         UUID(value.strip()) for value in raw_tenant_ids.split(",") if value.strip()
     )
 
+    enable_operations = (
+        os.environ.get(ENABLE_OPERATIONS_ENVIRONMENT_VARIABLE, "").strip().lower() in _TRUTHY_VALUES
+    )
+    artifact_root_text = os.environ.get(ARTIFACT_ROOT_ENVIRONMENT_VARIABLE, "").strip()
+
     return ApiConfig(
+        enable_operations=enable_operations,
+        artifact_root=Path(artifact_root_text) if artifact_root_text else None,
         enable_review_command_writes=enable_writes,
         cors_allow_origins=origins,
         allowed_tenant_ids=allowed_tenant_ids,

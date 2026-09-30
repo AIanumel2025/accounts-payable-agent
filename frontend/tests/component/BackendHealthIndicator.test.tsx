@@ -5,7 +5,7 @@ import { BackendHealthIndicator } from "@/components/application-shell/BackendHe
 
 const HEALTHY_INITIAL = {
   reachable: true,
-  data: { service: "ap-agent-review-api", api_version: "0.1.0", command_mode: "VALIDATION_ONLY" as const, payment_execution: "PROHIBITED" as const },
+  data: { service: "ap-agent-review-api", api_version: "0.1.0", command_mode: "VALIDATION_ONLY" as const, payment_execution: "PROHIBITED" as const, operations_mode: "DISABLED" as const },
   checkedAtIso: "2026-06-15T12:00:00Z",
 };
 

@@ -1,0 +1,10 @@
+.content {
+  padding: var(--space-5);
+  max-width: 72rem;
+}
+
+@media (max-width: 599px) {
+  .content {
+    padding: var(--space-4);
+  }
+}

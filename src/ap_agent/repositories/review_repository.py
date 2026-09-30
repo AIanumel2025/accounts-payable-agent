@@ -520,9 +520,9 @@ class ReviewRepository:
 
                     FROM ap_agent.workflow_instances AS workflow
 
-                    JOIN ap_agent.invoice_memory_records AS invoice
+                    JOIN ap_agent.workflow_effective_memory AS invoice
                         ON invoice.tenant_id = workflow.tenant_id
-                       AND invoice.workflow_id = workflow.workflow_id
+                           AND invoice.workflow_id = workflow.workflow_id
 
                     LEFT JOIN ap_agent.review_cases AS review
                         ON review.tenant_id = workflow.tenant_id
@@ -714,9 +714,9 @@ class ReviewRepository:
                         JOIN ap_agent.workflow_instances AS workflow
                             ON workflow.tenant_id = review.tenant_id
                            AND workflow.workflow_id = review.workflow_id
-                        JOIN ap_agent.invoice_memory_records AS invoice
-                            ON invoice.tenant_id = workflow.tenant_id
-                           AND invoice.workflow_id = workflow.workflow_id
+                        JOIN ap_agent.review_case_effective_memory AS invoice
+                            ON invoice.tenant_id = review.tenant_id
+                               AND invoice.review_id = review.review_id
                         {where_clause}
                     ) AS counted;
                     """,
@@ -745,9 +745,9 @@ class ReviewRepository:
                     JOIN ap_agent.workflow_instances AS workflow
                         ON workflow.tenant_id = review.tenant_id
                        AND workflow.workflow_id = review.workflow_id
-                    JOIN ap_agent.invoice_memory_records AS invoice
-                        ON invoice.tenant_id = workflow.tenant_id
-                       AND invoice.workflow_id = workflow.workflow_id
+                    JOIN ap_agent.review_case_effective_memory AS invoice
+                        ON invoice.tenant_id = review.tenant_id
+                           AND invoice.review_id = review.review_id
                     LEFT JOIN ap_agent.review_decisions AS decision
                         ON decision.tenant_id = review.tenant_id
                        AND decision.review_id = review.review_id
@@ -809,9 +809,9 @@ class ReviewRepository:
                     JOIN ap_agent.workflow_instances AS workflow
                         ON workflow.tenant_id = review.tenant_id
                        AND workflow.workflow_id = review.workflow_id
-                    JOIN ap_agent.invoice_memory_records AS invoice
-                        ON invoice.tenant_id = workflow.tenant_id
-                       AND invoice.workflow_id = workflow.workflow_id
+                    JOIN ap_agent.review_case_effective_memory AS invoice
+                        ON invoice.tenant_id = review.tenant_id
+                           AND invoice.review_id = review.review_id
                     LEFT JOIN ap_agent.review_decisions AS decision
                         ON decision.tenant_id = review.tenant_id
                        AND decision.review_id = review.review_id
@@ -945,9 +945,9 @@ class ReviewRepository:
                     JOIN ap_agent.workflow_instances AS workflow
                         ON workflow.tenant_id = review.tenant_id
                        AND workflow.workflow_id = review.workflow_id
-                    JOIN ap_agent.invoice_memory_records AS invoice
-                        ON invoice.tenant_id = workflow.tenant_id
-                       AND invoice.workflow_id = workflow.workflow_id
+                    JOIN ap_agent.review_case_effective_memory AS invoice
+                        ON invoice.tenant_id = review.tenant_id
+                           AND invoice.review_id = review.review_id
                     WHERE
                         review.tenant_id = %s AND review.review_id = %s
                         AND workflow.workflow_id = %s AND workflow.document_id = %s;
@@ -1148,8 +1148,8 @@ class ReviewRepository:
                     """
                     SELECT invoice.normalized_invoice
                     FROM ap_agent.review_cases AS review
-                    JOIN ap_agent.invoice_memory_records AS invoice
-                        ON invoice.tenant_id = review.tenant_id AND invoice.workflow_id = review.workflow_id
+                    JOIN ap_agent.review_case_effective_memory AS invoice
+                        ON invoice.tenant_id = review.tenant_id AND invoice.review_id = review.review_id
                     WHERE review.tenant_id = %s AND review.review_id = %s;
                     """,
                     (tenant_id, review_case_id),
@@ -1211,8 +1211,8 @@ class ReviewRepository:
             FROM ap_agent.review_cases AS review
             JOIN ap_agent.workflow_instances AS workflow
                 ON workflow.tenant_id = review.tenant_id AND workflow.workflow_id = review.workflow_id
-            JOIN ap_agent.invoice_memory_records AS invoice
-                ON invoice.tenant_id = workflow.tenant_id AND invoice.workflow_id = workflow.workflow_id
+            JOIN ap_agent.review_case_effective_memory AS invoice
+                ON invoice.tenant_id = review.tenant_id AND invoice.review_id = review.review_id
             WHERE review.tenant_id = %s AND review.review_id = %s;
             """,
             (tenant_id, review_case_id),
@@ -1243,8 +1243,8 @@ class ReviewRepository:
             FROM ap_agent.review_cases AS review
             JOIN ap_agent.workflow_instances AS workflow
                 ON workflow.tenant_id = review.tenant_id AND workflow.workflow_id = review.workflow_id
-            JOIN ap_agent.invoice_memory_records AS invoice
-                ON invoice.tenant_id = workflow.tenant_id AND invoice.workflow_id = workflow.workflow_id
+            JOIN ap_agent.review_case_effective_memory AS invoice
+                ON invoice.tenant_id = review.tenant_id AND invoice.review_id = review.review_id
             WHERE
                 review.tenant_id = %s AND review.review_id = %s AND workflow.workflow_id = %s
                 AND workflow.batch_id = %s AND workflow.document_id = %s
@@ -1528,10 +1528,11 @@ class ReviewRepository:
             SELECT
                 decision.decision_id, decision.decision_type, decision.decided_by, decision.evidence,
                 invoice.normalized_invoice, invoice.financial_validation, invoice.matching_result,
-                invoice.matched_reference_data, invoice.payload_sha256
+                invoice.matched_reference_data, invoice.payload_sha256,
+                invoice.original_memory_record_id, invoice.memory_version_id, invoice.memory_version_label
             FROM ap_agent.review_decisions AS decision
-            JOIN ap_agent.invoice_memory_records AS invoice
-                ON invoice.tenant_id = decision.tenant_id AND invoice.workflow_id = decision.workflow_id
+            JOIN ap_agent.review_case_effective_memory AS invoice
+                ON invoice.tenant_id = decision.tenant_id AND invoice.review_id = decision.review_id
             WHERE decision.tenant_id = %s AND decision.workflow_id = %s AND decision.review_id = %s
             ORDER BY decision.decided_at DESC, decision.decision_id DESC LIMIT 1;
             """,

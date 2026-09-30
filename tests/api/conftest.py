@@ -21,7 +21,10 @@ from ap_agent.config.postgres import MemoryConfig, PostgresTransportPolicy
 
 TEST_DSN_ENV_VAR = "AP_AGENT_TEST_POSTGRES_DSN"
 EXPECTED_TEST_DATABASE = "ap_agent_m8_test"
-RUNTIME_ROLE_NAME = "ap_agent_m10_test_runtime"
+# Overridable so two workflows sharing one test database (M8/M9/M10 and the
+# frontend workflow) never rotate each other's runtime-role password
+# mid-session; the default is unchanged.
+RUNTIME_ROLE_NAME = os.environ.get("AP_AGENT_TEST_API_RUNTIME_ROLE", "ap_agent_m10_test_runtime")
 
 
 def _owner_dsn_or_skip() -> str:

@@ -23,6 +23,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operations/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Jobs */
+        get: operations["list_jobs_api_v1_operations_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operations/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Job Detail */
+        get: operations["get_job_detail_api_v1_operations_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operations/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Invoice */
+        post: operations["submit_invoice_api_v1_operations_submissions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/review-cases": {
         parameters: {
             query?: never;
@@ -215,9 +266,72 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ApiEnvelope[JobDetailResponse] */
+        ApiEnvelope_JobDetailResponse_: {
+            data?: components["schemas"]["JobDetailResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
+        /** ApiEnvelope[JobListResponse] */
+        ApiEnvelope_JobListResponse_: {
+            data?: components["schemas"]["JobListResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
         /** ApiEnvelope[ReviewQueuePageResponse] */
         ApiEnvelope_ReviewQueuePageResponse_: {
             data?: components["schemas"]["ReviewQueuePageResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
+        /** ApiEnvelope[SubmissionResponse] */
+        ApiEnvelope_SubmissionResponse_: {
+            data?: components["schemas"]["SubmissionResponse"] | null;
             /**
              * Errors
              * @default []
@@ -475,6 +589,12 @@ export interface components {
              */
             command_mode: "COMMIT" | "VALIDATION_ONLY";
             /**
+             * Operations Mode
+             * @default DISABLED
+             * @enum {string}
+             */
+            operations_mode: "ENABLED" | "DISABLED";
+            /**
              * Payment Execution
              * @constant
              */
@@ -570,6 +690,153 @@ export interface components {
          * @enum {string}
          */
         InvoiceWorkflowStatus: "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "REVIEW_REQUIRED" | "FAILED" | "SKIPPED";
+        /** JobDetailResponse */
+        JobDetailResponse: {
+            /** Events */
+            events: components["schemas"]["JobEventResponse"][];
+            job: components["schemas"]["JobResponse"];
+        };
+        /** JobEventResponse */
+        JobEventResponse: {
+            /** Attempt Number */
+            attempt_number: number;
+            /** Error Code */
+            error_code: string | null;
+            /** Event Type */
+            event_type: string;
+            /** Message */
+            message: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Sequence Number */
+            sequence_number: number;
+            /** Stage */
+            stage: string | null;
+            /** Status */
+            status: string;
+        };
+        /** JobListResponse */
+        JobListResponse: {
+            /** Items */
+            items: components["schemas"]["JobResponse"][];
+            pagination: components["schemas"]["PaginationMeta"];
+        };
+        /** JobResponse */
+        JobResponse: {
+            /** Attempt Count */
+            attempt_count: number;
+            /** Byte Size */
+            byte_size: number | null;
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Current Stage */
+            current_stage: string | null;
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Job Type
+             * @enum {string}
+             */
+            job_type: "PROCESS_DOCUMENT" | "RESUME_WORKFLOW";
+            /** Media Type */
+            media_type: string | null;
+            /** Resumed Review Case Id */
+            resumed_review_case_id: string | null;
+            /** Review Case Id */
+            review_case_id: string | null;
+            /** Source Name */
+            source_name: string;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "REVIEW_REQUIRED" | "FAILED";
+            summary: components["schemas"]["JobSummaryResponse"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Workflow Id */
+            workflow_id: string | null;
+        };
+        /** JobStageSummary */
+        JobStageSummary: {
+            /** Attempt */
+            attempt: number;
+            /** Stage */
+            stage: string;
+            /** Status */
+            status: string;
+        };
+        /** JobSummaryResponse */
+        JobSummaryResponse: {
+            /**
+             * Corrected Fields
+             * @default []
+             */
+            corrected_fields: string[];
+            /** Currency */
+            currency?: string | null;
+            /** Decision Id */
+            decision_id?: string | null;
+            /** Derived Version */
+            derived_version?: string | null;
+            /**
+             * Executed Stages
+             * @default []
+             */
+            executed_stages: string[];
+            /** Financial Validation Status */
+            financial_validation_status?: string | null;
+            /** Invoice Number */
+            invoice_number?: string | null;
+            /** Memory Version Id */
+            memory_version_id?: string | null;
+            /** Outcome */
+            outcome?: string | null;
+            /** Purchase Order Status */
+            purchase_order_status?: string | null;
+            /** Restart Stage */
+            restart_stage?: string | null;
+            /** Resume Plan Id */
+            resume_plan_id?: string | null;
+            /**
+             * Review Reasons
+             * @default []
+             */
+            review_reasons: string[];
+            /** Review Required */
+            review_required?: boolean | null;
+            /**
+             * Stages
+             * @default []
+             */
+            stages: components["schemas"]["JobStageSummary"][];
+            /** Supplier Name */
+            supplier_name?: string | null;
+            /** Supplier Status */
+            supplier_status?: string | null;
+            /** Total Amount */
+            total_amount?: string | null;
+            /** Workflow Status */
+            workflow_status?: string | null;
+        };
         /** LineMatchResponse */
         LineMatchResponse: {
             /** Description Status */
@@ -736,6 +1003,12 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** SubmissionResponse */
+        SubmissionResponse: {
+            /** Idempotent Replay */
+            idempotent_replay: boolean;
+            job: components["schemas"]["JobResponse"];
+        };
         /** TimelineEventResponse */
         TimelineEventResponse: {
             /** Actor Id */
@@ -876,6 +1149,342 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_jobs_api_v1_operations_jobs_get: {
+        parameters: {
+            query?: {
+                status?: string[] | null;
+                job_type?: string | null;
+                review_case_id?: string | null;
+                page?: number;
+                page_size?: number;
+            };
+            header?: {
+                "X-Tenant-ID"?: string | null;
+                "X-Actor-ID"?: string | null;
+                "X-Actor-Role"?: string | null;
+                "X-Authenticated-At"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_JobListResponse_"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden role, or operations are disabled. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unknown job. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Idempotency key reused with different content. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Request or file too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unsupported or inconsistent file type. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Invalid upload, filename, field or idempotency key. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Redacted internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_job_detail_api_v1_operations_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+                "X-Actor-ID"?: string | null;
+                "X-Actor-Role"?: string | null;
+                "X-Authenticated-At"?: string | null;
+            };
+            path: {
+                /** @description Job identifier */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_JobDetailResponse_"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden role, or operations are disabled. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unknown job. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Idempotency key reused with different content. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Request or file too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unsupported or inconsistent file type. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Invalid upload, filename, field or idempotency key. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Redacted internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+        };
+    };
+    submit_invoice_api_v1_operations_submissions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+                "X-Tenant-ID"?: string | null;
+                "X-Actor-ID"?: string | null;
+                "X-Actor-Role"?: string | null;
+                "X-Authenticated-At"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One supported invoice file (PDF, PNG or JPEG). No other form field is accepted. */
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_SubmissionResponse_"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden role, or operations are disabled. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unknown job. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Idempotency key reused with different content. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Request or file too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unsupported or inconsistent file type. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Invalid upload, filename, field or idempotency key. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Redacted internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
                 };
             };
         };

@@ -10,6 +10,8 @@ interface Props {
   state: CommandState;
   refreshRequired: boolean;
   onRefresh: () => void;
+  /** M11D Core: a worker job consumes the handoff, so say "queued" rather than "not run". */
+  operationsEnabled?: boolean;
 }
 
 /**
@@ -19,7 +21,7 @@ interface Props {
  * lets validation be mistaken for execution.
  */
 export const CommandResultBanner = forwardRef<HTMLDivElement, Props>(function CommandResultBanner(
-  { state, refreshRequired, onRefresh },
+  { state, refreshRequired, onRefresh, operationsEnabled = false },
   ref,
 ) {
   if (state.phase === "idle") {
@@ -89,7 +91,13 @@ export const CommandResultBanner = forwardRef<HTMLDivElement, Props>(function Co
       {resumed ? (
         <>
           <p className={styles.bannerText}>
-            <strong>A controlled workflow-resume handoff was created. Downstream execution has not run yet.</strong>
+            {operationsEnabled ? (
+              <strong>
+                The workflow-resume handoff was created and a worker job was queued. The pipeline has not resumed yet; the job status appears below.
+              </strong>
+            ) : (
+              <strong>A controlled workflow-resume handoff was created. Downstream execution has not run yet.</strong>
+            )}
           </p>
           <dl className={styles.resultDetails}>
             <dt>Restart stage</dt>

@@ -79,6 +79,10 @@ __all__ = [
     "ReviewAuthenticationError",
     "ReviewCommandRejectedError",
     "ReviewIntegrityError",
+    "OperationsRequestRejectedError",
+    "ArtifactIntegrityError",
+    "ResumeIntegrityError",
+    "JobLeaseLostError",
 ]
 
 
@@ -294,3 +298,47 @@ class ReviewIntegrityError(Exception):
         super().__init__(reason)
         self.reason = reason
         self.details = details or {}
+
+
+# ------------------------------------------------------------
+# M11D (durable operations console and controlled workflow execution)
+# ------------------------------------------------------------
+
+
+class OperationsRequestRejectedError(Exception):
+    """An operations-console request (upload submission) was refused
+    before anything was stored or enqueued. Carries one stable,
+    input-free error code (never the offending value) and the HTTP status
+    `ap_agent.api.errors` should answer with."""
+
+    def __init__(self, code: str, http_status: int = 422, message: str = "Operations request rejected."):
+        super().__init__(message)
+        self.code = code
+        self.http_status = http_status
+        self.message = message
+
+
+class ArtifactIntegrityError(Exception):
+    """A stored upload artifact is missing, escapes the artifact root, or no
+    longer hashes to the recorded SHA-256. Fails closed before any pipeline
+    stage runs. `code` is a stable, path-free identifier."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+class ResumeIntegrityError(Exception):
+    """A persisted resume plan, correction overlay, memory payload or
+    identity failed verification, so the resume executor refuses to run any
+    downstream stage. `code` is a stable, content-free identifier that is
+    safe to store on a job and show in the UI."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+class JobLeaseLostError(Exception):
+    """A worker tried to heartbeat or finalize a job whose lease it no
+    longer owns (expired and reclaimed, or already finalized)."""

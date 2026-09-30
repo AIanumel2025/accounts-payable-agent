@@ -42,6 +42,7 @@ from ap_agent.models.interface import (
 )
 from ap_agent.models.normalization import InvoiceFieldName
 from ap_agent.models.orchestration import OrchestrationStage
+from ap_agent.repositories.operations_repository import insert_resume_job, resume_job_id
 from ap_agent.repositories.review_repository import ReviewRepository, human_review_disposition_from_database
 from ap_agent.serialization.memory_json import canonical_json_bytes
 from ap_agent.services.review_commands import (
@@ -345,6 +346,7 @@ def execute_resume_command(
         (
             decision_id, decision_type, decided_by, decision_evidence, normalized_payload,
             financial_payload, matching_payload, reference_payload, stored_memory_payload_sha256,
+            original_memory_record_id, source_memory_version_id, source_memory_version_label,
         ) = decision_row
 
         if decided_by != command.actor.actor_id:
@@ -445,6 +447,12 @@ def execute_resume_command(
             "restart_stage": resume_plan.restart_stage.value,
             "source_normalization_sha256": resume_plan.source_normalization_sha256,
             "source_memory_payload_sha256": stored_memory_payload_sha256.strip(),
+            # M11D Core: which stored memory the plan was built from (the
+            # original record, or a derived version for a second review cycle).
+            "source_memory_record_id": str(original_memory_record_id),
+            "source_memory_version_id": (
+                None if source_memory_version_id is None else str(source_memory_version_id)
+            ),
             "correction_overlay_json": resume_plan.correction_overlay_json,
             "correction_overlay_sha256": resume_plan.correction_overlay_sha256,
             "derived_version": resume_plan.derived_version,
@@ -452,6 +460,8 @@ def execute_resume_command(
             "resulting_review_revision": context.review_revision,
             "resulting_workflow_revision": resulting_workflow_revision,
             "workflow_resumed": True,
+            # M11D Core: the durable job that consumes this plan (additive).
+            "resume_job_id": str(resume_job_id(command.tenant_id, resume_plan.resume_plan_id)),
             "requested_at": command.requested_at.isoformat(),
         }
 
@@ -460,6 +470,23 @@ def execute_resume_command(
             sequence_number=next_sequence_number, event_type="WORKFLOW_RESUME_REQUESTED", event_status="IN_PROGRESS",
             actor_role=command.actor.role.value, actor_id=command.actor.actor_id,
             message="Human-review decision produced a workflow resume plan.", payload=audit_payload,
+        )
+
+        # M11D Core: enqueue the job that will actually resume the workflow
+        # in this same transaction -- a committed handoff can never exist
+        # without its job, and a job never without its handoff.
+        cursor.execute(
+            "SELECT source_name FROM ap_agent.workflow_instances WHERE tenant_id = %s AND workflow_id = %s;",
+            (command.tenant_id, command.workflow_id),
+        )
+        source_name = cursor.fetchone()[0]
+
+        insert_resume_job(
+            cursor, tenant_id=command.tenant_id, idempotency_key=command.idempotency_key,
+            request_fingerprint=command_fingerprint, source_name=source_name, workflow_id=command.workflow_id,
+            batch_id=command.batch_id, document_id=command.document_id, review_id=command.review_case_id,
+            resume_plan_id=resume_plan.resume_plan_id, restart_stage=resume_plan.restart_stage.value,
+            created_by=command.actor.actor_id,
         )
 
         command_result = ReviewCommandResult(

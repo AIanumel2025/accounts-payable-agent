@@ -41,7 +41,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ap_agent.api.config import ApiConfig, load_api_config
 from ap_agent.api.errors import register_exception_handlers
-from ap_agent.api.routes import dashboard, health, review_cases, review_commands
+from ap_agent.api.routes import dashboard, health, operations, review_cases, review_commands
+from ap_agent.api.upload_limits import RequestSizeLimitMiddleware
 from ap_agent.config.postgres import MemoryConfig
 from ap_agent.models.interface import InterfaceConfig, default_interface_config
 
@@ -112,6 +113,19 @@ def create_app(
     app.state.api_config = resolved_api_config
     app.state.interface_config = resolved_interface_config
 
+    if resolved_api_config.enable_operations:
+        # M11D Core: only built when operations are explicitly enabled. The
+        # artifact root is a server-side value; it is never returned.
+        from ap_agent.artifacts.storage import LocalFilesystemArtifactStore
+
+        assert resolved_api_config.artifact_root is not None
+        app.state.artifact_store = LocalFilesystemArtifactStore(resolved_api_config.artifact_root)
+
+    app.add_middleware(
+        RequestSizeLimitMiddleware,
+        maximum_request_bytes=resolved_api_config.upload_limits.maximum_request_bytes,
+    )
+
     if resolved_api_config.cors_allow_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -127,5 +141,6 @@ def create_app(
     app.include_router(dashboard.router)
     app.include_router(review_cases.router)
     app.include_router(review_commands.router)
+    app.include_router(operations.router)
 
     return app

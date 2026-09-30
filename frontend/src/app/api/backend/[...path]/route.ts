@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildDevelopmentAuthHeaders } from "@/lib/auth/dev-headers";
 import { loadServerEnvConfig, ServerConfigError } from "@/lib/config/server-env";
+import { loadOperationsMode } from "@/lib/config/operations-mode";
 
 /**
  * Server-side API boundary the browser talks to (M11A task §5, extended
@@ -41,6 +42,8 @@ const REQUEST_TIMEOUT_MS = Number(process.env.AP_AGENT_BACKEND_TIMEOUT_MS ?? 8_0
 
 interface AllowedPathMatch {
   allowedQueryParams: ReadonlySet<string>;
+  /** M11D Core: operations read paths are only served while the operations mode is enabled. */
+  requiresOperations?: boolean;
 }
 
 /**
@@ -85,6 +88,25 @@ export function matchAllowedPath(segments: readonly string[]): AllowedPathMatch 
     return { allowedQueryParams: new Set() };
   }
 
+  // M11D Core: read-only job list and job detail (exact shapes; no submissions, no sub-paths).
+  if (joined === "api/v1/operations/jobs") {
+    return {
+      allowedQueryParams: new Set(["page", "page_size", "status", "job_type", "review_case_id"]),
+      requiresOperations: true,
+    };
+  }
+
+  if (
+    segments.length === 5 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "operations" &&
+    segments[3] === "jobs" &&
+    UUID_PATTERN.test(segments[4]!)
+  ) {
+    return { allowedQueryParams: new Set(), requiresOperations: true };
+  }
+
   return null;
 }
 
@@ -97,6 +119,16 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
       { errors: ["BACKEND_PATH_NOT_ALLOWED"], generated_at: new Date().toISOString() },
       { status: 404 },
     );
+  }
+
+  if (match.requiresOperations) {
+    const operationsMode = loadOperationsMode();
+    if (!operationsMode.valid || operationsMode.mode !== "enabled") {
+      return NextResponse.json(
+        { errors: ["OPERATIONS_DISABLED"], generated_at: new Date().toISOString() },
+        { status: 404 },
+      );
+    }
   }
 
   let config;

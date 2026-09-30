@@ -66,6 +66,9 @@ api = [
     "fastapi>=0.115,<1.0",
     "uvicorn>=0.34,<1.0",
     "httpx>=0.28,<1.0",
+    # M11D Core: multipart/form-data parsing for the upload route
+    # (`starlette.requests.Request.form`). Imported lazily by Starlette.
+    "python-multipart>=0.0.9",
 ]
 
 [tool.setuptools.packages.find]

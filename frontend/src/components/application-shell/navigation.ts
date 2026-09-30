@@ -25,4 +25,10 @@ export const NAV_ITEMS: NavItem[] = [
     status: "active",
     description: "Browse and filter invoices awaiting human review",
   },
+  {
+    label: "Operations",
+    href: "/operations",
+    status: "active",
+    description: "Upload invoices and follow processing and resume jobs",
+  },
 ];

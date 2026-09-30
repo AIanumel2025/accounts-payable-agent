@@ -560,14 +560,45 @@ verification); backend: `python -m pytest tests/api/test_m11c_review_actions_pos
 
 **Important:**
 
-- Workflow resume creates a **controlled handoff only** (restart stage + derived
-  version). *Downstream execution has not run yet* — that is M11D.
+- In M11C, workflow resume creates a **controlled handoff only** (restart stage +
+  derived version). M11D adds the worker that executes it (see below).
 - Authentication is still the M10 **prototype header adapter**. It is
   **not production authentication**; M11C is **not approved for a public
   write-enabled deployment**. Headers are built server-side and never come from
   browser input. Production needs OIDC/JWT.
 
 See `docs/m11c_review_actions_report.md` for the full report.
+
+### Operations console (M11D Core)
+
+Upload a PDF/PNG/JPEG invoice at `/operations`; it is **queued** (no OCR runs in
+the HTTP request) and a **separate single worker** runs the existing Phase 1–8
+pipeline. The job ends *Completed* or *Review required*; a review case can then
+be claimed, approved or corrected (M11C) and **resumed** — the worker re-enters
+the pipeline at the recorded restart stage and never reruns ingestion,
+preprocessing, OCR or normalization. The original `invoice_memory_records` row is
+never updated; the result is an append-only `invoice_memory_versions` row.
+
+Everything is **off by default** and fails closed on a mode mismatch:
+
+| Variable | Purpose |
+|---|---|
+| `AP_AGENT_ENABLE_OPERATIONS` / `AP_AGENT_ARTIFACT_ROOT` | Backend accepts uploads; controlled local artifact directory (outside the frontend) |
+| `AP_AGENT_ENABLE_WORKER_EXECUTION` | Lets `python -m ap_agent.worker` execute jobs (exit 3 if not set) |
+| `AP_AGENT_WORKER_OCR_PROVIDER` | `paddleocr` or `tesseract` (Tesseract always routes to review by design) |
+| `AP_AGENT_FRONTEND_OPERATIONS_MODE` | Frontend operations mode, matched against `/health.operations_mode` |
+
+```bash
+cd frontend && npm run build
+npm run demo:m11d             # seeds a tenant, starts FastAPI + worker + Next.js
+npm run demo:m11d -- --check  # smoke test
+npm run test:e2e:real-operations
+```
+
+**M11D Core supports one active worker only** — no leases, heartbeats, crash
+recovery or dead-letter queue (M11E). Authentication is still the prototype
+header adapter; not for a public write-enabled deployment. No payment, bank or
+ERP action exists. See `docs/m11d_operations_console_report.md`.
 
 ### Local development
 
@@ -593,6 +624,8 @@ npm run test:e2e:integration  # real FastAPI + PostgreSQL + Next.js acceptance
 npm run test:e2e:actions      # M11C review actions, stateful mocked backend
 npm run test:e2e:real-actions # M11C write-enabled real FastAPI + PostgreSQL + Next.js
 npm run demo:m11c             # isolated, write-enabled local demonstration
+npm run test:e2e:real-operations # M11D upload -> worker -> review -> resume (real stack)
+npm run demo:m11d             # isolated operations-console demonstration
 npm run api:generate     # regenerate TypeScript types from FastAPI's OpenAPI schema
 npm run api:check        # fail if the generated contract is stale (CI)
 npm run check:build-secrets   # scan .next/static for leaked server-only values
