@@ -24,6 +24,7 @@ which a database trigger also enforces.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterator, Optional
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -48,6 +49,11 @@ __all__ = [
     "resume_job_id",
     "insert_job_event",
     "insert_resume_job",
+    "DerivedVersionRecord",
+    "derived_version_id",
+    "derived_review_id",
+    "insert_derived_version",
+    "open_derived_review_case",
     "set_worker_scope",
 ]
 
@@ -233,6 +239,118 @@ def insert_resume_job(
         stage=restart_stage, message=f"Workflow resume queued; restart stage {restart_stage}.",
     )
     return job
+
+
+@dataclass(frozen=True)
+class DerivedVersionRecord:
+    """Everything an append-only `invoice_memory_versions` row holds."""
+
+    version_id: UUID
+    tenant_id: UUID
+    workflow_id: UUID
+    batch_id: UUID
+    document_id: UUID
+    parent_memory_record_id: UUID
+    parent_memory_version_id: Optional[UUID]
+    resume_plan_id: UUID
+    decision_id: UUID
+    derived_version: str
+    restart_stage: str
+    source_document_sha256: str
+    source_memory_payload_sha256: str
+    source_normalization_sha256: str
+    correction_overlay_sha256: str
+    invoice_number: Optional[str]
+    supplier_name: Optional[str]
+    currency: Optional[str]
+    total_amount: Optional[Any]
+    normalization_status: str
+    financial_validation_status: str
+    matching_status: str
+    supplier_resolution_status: str
+    purchase_order_status: str
+    review_required: bool
+    review_reasons: tuple[str, ...]
+    terminal_status: str
+    new_review_id: Optional[UUID]
+    normalized_invoice: dict
+    financial_validation: dict
+    matching_result: dict
+    matched_reference_data: dict
+    payload_sha256: str
+
+
+def derived_version_id(tenant_id: UUID, resume_plan_id: UUID) -> UUID:
+    return uuid5(NAMESPACE_URL, f"ap-agent/derived-memory-version/{tenant_id}/{resume_plan_id}")
+
+
+def derived_review_id(tenant_id: UUID, resume_plan_id: UUID) -> UUID:
+    return uuid5(NAMESPACE_URL, f"ap-agent/derived-review-case/{tenant_id}/{resume_plan_id}")
+
+
+def insert_derived_version(cursor: "psycopg.Cursor", record: DerivedVersionRecord) -> bool:
+    """Append the derived version once. The deterministic identity and the
+    `(tenant, resume_plan)` unique constraint make a repeated resume
+    execution a no-op; returns whether a new row was written."""
+
+    from psycopg.types.json import Jsonb
+
+    cursor.execute(
+        """
+        INSERT INTO ap_agent.invoice_memory_versions
+            (version_id, tenant_id, workflow_id, batch_id, document_id, parent_memory_record_id,
+             parent_memory_version_id, resume_plan_id, decision_id, derived_version, restart_stage,
+             source_document_sha256, source_memory_payload_sha256, source_normalization_sha256,
+             correction_overlay_sha256, invoice_number, supplier_name, currency, total_amount,
+             normalization_status, financial_validation_status, matching_status,
+             supplier_resolution_status, purchase_order_status, review_required, review_reasons,
+             terminal_status, new_review_id, normalized_invoice, financial_validation,
+             matching_result, matched_reference_data, payload_sha256)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (tenant_id, resume_plan_id) DO NOTHING;
+        """,
+        (
+            record.version_id, record.tenant_id, record.workflow_id, record.batch_id, record.document_id,
+            record.parent_memory_record_id, record.parent_memory_version_id, record.resume_plan_id,
+            record.decision_id, record.derived_version, record.restart_stage, record.source_document_sha256,
+            record.source_memory_payload_sha256, record.source_normalization_sha256,
+            record.correction_overlay_sha256, record.invoice_number, record.supplier_name, record.currency,
+            record.total_amount, record.normalization_status, record.financial_validation_status,
+            record.matching_status, record.supplier_resolution_status, record.purchase_order_status,
+            record.review_required, list(record.review_reasons), record.terminal_status, record.new_review_id,
+            Jsonb(record.normalized_invoice), Jsonb(record.financial_validation),
+            Jsonb(record.matching_result), Jsonb(record.matched_reference_data), record.payload_sha256,
+        ),
+    )
+    return cursor.rowcount == 1
+
+
+def open_derived_review_case(
+    cursor: "psycopg.Cursor",
+    *,
+    tenant_id: UUID,
+    workflow_id: UUID,
+    review_id: UUID,
+    version_id: UUID,
+    resume_plan_id: UUID,
+    reason_codes: tuple[str, ...],
+    summary: str,
+) -> None:
+    """A *new* `OPEN` review case for a resumed workflow that still needs
+    review. The resolved case is never reopened or touched; the version and
+    plan links are immutable (database trigger)."""
+
+    cursor.execute(
+        """
+        INSERT INTO ap_agent.review_cases
+            (review_id, tenant_id, workflow_id, review_status, priority, reason_codes, summary,
+             memory_version_id, source_resume_plan_id)
+        VALUES (%s, %s, %s, 'OPEN', 3, %s, %s, %s, %s)
+        ON CONFLICT (review_id) DO NOTHING;
+        """,
+        (review_id, tenant_id, workflow_id, list(reason_codes), summary, version_id, resume_plan_id),
+    )
 
 
 class OperationsRepository:
