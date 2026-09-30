@@ -68,6 +68,15 @@ MIGRATION_MANIFEST: tuple[ManifestEntry, ...] = (
         sql_filename="0003_matched_invoice_memory.sql",
         expected_checksum="89d65212323f1fa2cef8993e1b3540b296c0b7ac50ccce497704694965e1f659",
     ),
+    ManifestEntry(
+        migration_id="0004_durable_operations",
+        description=(
+            "Add the single-worker workflow job queue, append-only job events, "
+            "derived invoice-memory versions and effective-memory views (M11D Core)."
+        ),
+        sql_filename="0004_durable_operations.sql",
+        expected_checksum="a036689007db187f05c3fcc6b02a5a56dee752f14f558ce90a6e054aa463ff6e",
+    ),
 )
 
 

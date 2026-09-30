@@ -336,6 +336,7 @@ def test_clean_migration_application(applied_migrations):
         "0001_memory_schema_bootstrap",
         "0002_operational_memory_tables",
         "0003_matched_invoice_memory",
+        "0004_durable_operations",
     }
     assert all(status in {"APPLIED", "ALREADY_APPLIED"} for status in statuses.values())
 
