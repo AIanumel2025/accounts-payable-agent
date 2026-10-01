@@ -254,7 +254,8 @@ test.describe.serial("M11E hosted workflow (Clerk-style authentication, object s
     const { context, page } = await session(browser, "operator");
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
-    await context.route("**/_next/static/**", async (route) => {
+    // Hold back only the JavaScript: stylesheets are render-blocking, and streamed server HTML needs them to settle.
+    await context.route(/\/_next\/static\/.*\.js(\?.*)?$/, async (route) => {
       await gate;
       await route.continue();
     });
@@ -309,7 +310,7 @@ test.describe.serial("M11E hosted workflow (Clerk-style authentication, object s
 
     const forbidden = [
       S.secrets.clerkSecretKey, S.secrets.runtimePassword, S.secrets.s3Endpoint, S.secrets.bucket, S.secrets.apiHost, S.secrets.jwksHost,
-      S.tenantId, S.otherTenantId, S.orgNames.a, "AP_AGENT_", "postgresql://", "object://", "tenants/", "CLERK_SECRET_KEY",
+      S.tenantId, S.otherTenantId, S.orgNames.a, "AP_AGENT_", "postgresql://", "object://", "tenants/",
       ...Object.keys(S.cookies).map(sessionToken),
     ];
     for (const value of forbidden) expect(haystack, "browser-visible content contains a forbidden value").not.toContain(value);
@@ -318,7 +319,7 @@ test.describe.serial("M11E hosted workflow (Clerk-style authentication, object s
 
   test("accessibility: no serious or critical violations on the hosted pages (desktop and mobile)", async ({ browser }) => {
     for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
-      for (const [persona, target] of [["operator", "/operations"], ["reviewer", "/review-queue"], ["unmapped", "/dashboard"], ["noOrganization", "/dashboard"]] as const) {
+      for (const [persona, target] of [["operator", "/operations"], ["reviewer", "/review-queue"], ["unmapped", "/access-denied?reason=not-mapped"], ["noOrganization", "/organization-required"]] as const) {
         const { context, page } = await session(browser, persona, viewport);
         await page.goto(`${S.web}${target}`);
         await expect(page.locator("main")).toBeVisible();

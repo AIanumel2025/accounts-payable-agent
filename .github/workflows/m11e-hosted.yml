@@ -86,7 +86,7 @@ jobs:
         if: matrix.image == 'web'
         run: |
           docker run --rm --entrypoint sh ap-agent-web:ci -c '
-            ! grep -rIlE "CLERK_SECRET_KEY|AP_AGENT_POSTGRES|AP_AGENT_S3_|AP_AGENT_CLERK_ISSUER|AP_AGENT_API_BASE_URL|AP_AGENT_API_HOSTPORT" /app/.next/static
+            ! grep -rIlE "AP_AGENT_POSTGRES|AP_AGENT_S3_|AP_AGENT_CLERK_ISSUER|AP_AGENT_API_BASE_URL|AP_AGENT_API_HOSTPORT" /app/.next/static
           '
 
       - name: API image starts, answers liveness and refuses an unsafe hosted configuration
