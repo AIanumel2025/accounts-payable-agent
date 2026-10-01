@@ -77,6 +77,15 @@ MIGRATION_MANIFEST: tuple[ManifestEntry, ...] = (
         sql_filename="0004_durable_operations.sql",
         expected_checksum="a036689007db187f05c3fcc6b02a5a56dee752f14f558ce90a6e054aa463ff6e",
     ),
+    ManifestEntry(
+        migration_id="0005_identity_mappings",
+        description=(
+            "Add the controlled external-identity to tenant/role mapping tables "
+            "(M11E authentication)."
+        ),
+        sql_filename="0005_identity_mappings.sql",
+        expected_checksum="0002f7fa132c870539c62f38affbccb29716c6dbfb4ada936e8dec03ef2f5d00",
+    ),
 )
 
 

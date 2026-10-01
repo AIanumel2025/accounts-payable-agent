@@ -342,3 +342,15 @@ class ResumeIntegrityError(Exception):
 class JobLeaseLostError(Exception):
     """A worker tried to heartbeat or finalize a job whose lease it no
     longer owns (expired and reclaimed, or already finalized)."""
+
+
+class AuthenticationUnavailableError(Exception):
+    """Raised when the identity provider's signing keys cannot be obtained
+    (network failure, malformed key set). Maps to HTTP 503 -- the caller's
+    token was neither accepted nor rejected, so the request fails closed
+    without claiming the credential was invalid (M11E)."""
+
+    def __init__(self, reason: str, details: dict[str, Any] | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}

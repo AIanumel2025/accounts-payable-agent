@@ -16,6 +16,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8,<9",
+    # M11E: mocked S3 service for the storage contract tests (test-only).
+    "moto[s3,server]>=5,<6",
 ]
 pdf = [
     # PyMuPDF. Pinned to the version recorded in the notebook run
@@ -69,6 +71,15 @@ api = [
     # M11D Core: multipart/form-data parsing for the upload route
     # (`starlette.requests.Request.form`). Imported lazily by Starlette.
     "python-multipart>=0.0.9",
+    # M11E: independent verification of Clerk session tokens (RS256) in
+    # FastAPI. Imported lazily, only when a token is verified.
+    "PyJWT[crypto]>=2.8,<3",
+]
+s3 = [
+    # M11E: S3-compatible object storage (Cloudflare R2). Imported lazily by
+    # ap_agent.artifacts.s3.build_s3_client. 1.36+ is required for the
+    # explicit checksum-calculation settings R2 needs.
+    "boto3>=1.36,<2",
 ]
 
 [tool.setuptools.packages.find]

@@ -333,7 +333,7 @@ def verify_resume_inputs(
                 raise _fail("RESUME_ARTIFACT_HASH_MISMATCH")
 
             try:
-                artifact_store.open_verified(origin[0], tenant_id=tenant_id, expected_sha256=origin[1])
+                artifact_store.verify_integrity(origin[0], tenant_id=tenant_id, expected_sha256=origin[1])
             except ArtifactIntegrityError as error:
                 raise _fail("RESUME_ARTIFACT_INTEGRITY") from error
 

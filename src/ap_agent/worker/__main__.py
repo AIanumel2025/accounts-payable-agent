@@ -4,6 +4,13 @@ Fail-closed: refuses to start unless `AP_AGENT_ENABLE_WORKER_EXECUTION` is
 explicitly truthy. Prints only safe status lines (never a DSN, path or
 invoice content). Supports exactly one active worker (see
 `ap_agent.worker.runner`).
+
+M11E: reads uploads from the configured artifact store (local filesystem, or
+S3-compatible object storage such as Cloudflare R2). In the `hosted`
+environment it requires object storage and PaddleOCR, builds the OCR engine
+at startup so a missing or broken provider fails clearly *before* any job is
+claimed, removes each job's scratch directory when the job finishes, and
+shuts down gracefully on SIGTERM (the in-flight job always finishes first).
 """
 
 from __future__ import annotations
@@ -17,10 +24,33 @@ import threading
 EXIT_OK = 0
 EXIT_DISABLED = 3
 EXIT_CONFIGURATION = 4
+EXIT_OCR_UNAVAILABLE = 5
 
 
-def build_runner(config):
-    from ap_agent.artifacts.storage import LocalFilesystemArtifactStore
+class OcrUnavailableError(Exception):
+    """The OCR provider could not be constructed at startup."""
+
+
+class _ScratchCleaningExecutor:
+    """Removes a job's phase-artifact scratch directory after it runs.
+    Used only with object storage, where nothing durable lives there."""
+
+    def __init__(self, inner, directory_for) -> None:
+        self._inner = inner
+        self._directory_for = directory_for
+
+    def execute(self, job):
+        import shutil
+
+        try:
+            return self._inner.execute(job)
+        finally:
+            shutil.rmtree(self._directory_for(job), ignore_errors=True)
+
+
+def build_runner(config, *, warm_up_ocr: bool = False):
+    from ap_agent.artifacts.factory import build_artifact_store
+    from ap_agent.config.deployment import StorageMode
     from ap_agent.config.postgres import MemoryConfig
     from ap_agent.db.connection import load_dsn
     from ap_agent.repositories.operations_repository import OperationsRepository
@@ -39,8 +69,14 @@ def build_runner(config):
     memory_config = MemoryConfig()
     dsn = load_dsn(memory_config)
     operations = OperationsRepository(dsn, memory_config)
-    store = LocalFilesystemArtifactStore(config.artifact_root)
+    store = build_artifact_store(config.storage_mode, artifact_root=config.artifact_root, s3=config.s3)
     ocr_provider = OcrEngineProvider(config.ocr_provider)
+
+    if warm_up_ocr:
+        try:
+            ocr_provider.get()  # fails here, before any job is claimed, if the provider is unusable
+        except Exception as error:  # noqa: BLE001 - reported by type only
+            raise OcrUnavailableError(type(error).__name__) from error
     reference_data = load_reference_data(config)
 
     def phase_directory(job):
@@ -70,6 +106,10 @@ def build_runner(config):
         ocr_provider_name=config.ocr_provider,
     )
 
+    if config.storage_mode is StorageMode.S3:
+        document_executor = _ScratchCleaningExecutor(document_executor, phase_directory)
+        resume_executor = _ScratchCleaningExecutor(resume_executor, phase_directory)
+
     return WorkerRunner(
         operations=operations,
         document_executor=document_executor,
@@ -86,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
+    from ap_agent.config.deployment import HostedConfigurationError, describe_configuration_status
     from ap_agent.worker.config import WorkerConfigurationError, load_worker_config
 
     try:
@@ -93,6 +134,16 @@ def main(argv: list[str] | None = None) -> int:
     except WorkerConfigurationError as error:
         print(f"worker: configuration error: {error}", file=sys.stderr)
         return EXIT_CONFIGURATION
+    except HostedConfigurationError as error:
+        # Problem codes name settings, never values.
+        print(f"worker: configuration error: {', '.join(error.problems)}", file=sys.stderr)
+        return EXIT_CONFIGURATION
+
+    print(
+        "worker: configuration status: "
+        + ", ".join(f"{name}={value}" for name, value in sorted(describe_configuration_status().items())),
+        flush=True,
+    )
 
     if not config.execution_enabled:
         print(
@@ -104,11 +155,14 @@ def main(argv: list[str] | None = None) -> int:
     from ap_agent.exceptions import PostgresConfigurationError
 
     try:
-        runner = build_runner(config)
+        runner = build_runner(config, warm_up_ocr=config.hosted)
     except PostgresConfigurationError as error:
         # The message names the variable, never its value.
         print(f"worker: database configuration error: {error}", file=sys.stderr)
         return EXIT_CONFIGURATION
+    except OcrUnavailableError as error:
+        print(f"worker: the OCR provider could not be initialised ({error}).", file=sys.stderr)
+        return EXIT_OCR_UNAVAILABLE
 
     if arguments.once:
         finished = runner.run_once()
