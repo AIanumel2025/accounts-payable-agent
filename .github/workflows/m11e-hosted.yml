@@ -76,11 +76,9 @@ jobs:
 
       - name: Scan the image's application files for secrets
         run: |
-          docker run --rm --entrypoint sh ap-agent-${{ matrix.image }}:ci -c '
-            roots=""; for d in /app /opt/ap-agent; do [ -d "$d" ] && roots="$roots $d"; done
-            ! grep -rIE --exclude-dir=node_modules --exclude-dir=site-packages \
-              "sk_(live|test)_[A-Za-z0-9]{8,}|postgres(ql)?://[^ \"'"'"']+:[^ \"'"'"']+@|-----BEGIN (RSA |EC )?PRIVATE KEY|AKIA[0-9A-Z]{12,}" $roots
-          '
+          # scripts/scan_secrets.sh is mounted read-only; it flags literal credentials only (see its header).
+          docker run --rm -v "$PWD/scripts/scan_secrets.sh:/scan_secrets.sh:ro" --entrypoint sh \
+            ap-agent-${{ matrix.image }}:ci /scan_secrets.sh /app /opt/ap-agent
 
       - name: Web bundle contains no server-only value (also enforced during the image build)
         if: matrix.image == 'web'
