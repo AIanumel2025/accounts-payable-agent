@@ -147,6 +147,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Session */
+        get: operations["get_session_api_v1_session_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -311,6 +328,27 @@ export interface components {
         /** ApiEnvelope[ReviewQueuePageResponse] */
         ApiEnvelope_ReviewQueuePageResponse_: {
             data?: components["schemas"]["ReviewQueuePageResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
+        /** ApiEnvelope[SessionResponse] */
+        ApiEnvelope_SessionResponse_: {
+            data?: components["schemas"]["SessionResponse"] | null;
             /**
              * Errors
              * @default []
@@ -1003,6 +1041,25 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /**
+         * SessionResponse
+         * @description M11E: who the authenticated caller is, as the database mapping (not
+         *     the identity provider or the browser) defines it.
+         */
+        SessionResponse: {
+            /**
+             * Auth Mode
+             * @enum {string}
+             */
+            auth_mode: "prototype_headers" | "clerk_jwt";
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "TENANT_ADMIN" | "AP_OPERATOR" | "AP_REVIEWER" | "READ_ONLY_AUDITOR";
+            /** Tenant Display Name */
+            tenant_display_name?: string | null;
+        };
         /** SubmissionResponse */
         SubmissionResponse: {
             /** Idempotent Replay */
@@ -1127,6 +1184,7 @@ export interface operations {
                 "X-Actor-ID"?: string | null;
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -1167,6 +1225,7 @@ export interface operations {
                 "X-Actor-ID"?: string | null;
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -1273,6 +1332,7 @@ export interface operations {
                 "X-Actor-ID"?: string | null;
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 /** @description Job identifier */
@@ -1383,6 +1443,7 @@ export interface operations {
                 "X-Actor-ID"?: string | null;
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -1505,6 +1566,7 @@ export interface operations {
                 "X-Actor-ID"?: string | null;
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -1539,6 +1601,7 @@ export interface operations {
                 "X-Actor-ID"?: string | null;
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 /** @description Human-review case identifier */
@@ -1576,6 +1639,7 @@ export interface operations {
                 "X-Actor-ID"?: string | null;
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 /** @description Human-review case identifier */
@@ -1667,6 +1731,7 @@ export interface operations {
                 "X-Actor-ID"?: string | null;
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 /** @description Human-review case identifier */
@@ -1750,6 +1815,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_session_api_v1_session_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+                "X-Actor-ID"?: string | null;
+                "X-Actor-Role"?: string | null;
+                "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_SessionResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

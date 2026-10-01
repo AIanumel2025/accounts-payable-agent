@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { buildDevelopmentAuthHeaders } from "@/lib/auth/dev-headers";
+import { authFailureCode, getBackendAuthHeaders, type BackendAuthResult } from "@/lib/auth/backend-auth";
 import { loadCommandMode, modesAgree, type CommandModeConfig } from "@/lib/config/command-mode";
 import { loadServerEnvConfig, ServerConfigError, type ServerEnvConfig } from "@/lib/config/server-env";
 import {
@@ -34,6 +34,8 @@ export interface BoundaryDeps {
   fetchImpl: typeof fetch;
   now: () => Date;
   verifyCsrf: (token: string | null, reviewCaseId: string) => boolean;
+  /** Identity presented to FastAPI (M11E). Defaults to development headers or the Clerk bearer token, by auth mode. */
+  authHeaders?: (config: ServerEnvConfig, now: Date) => Promise<BackendAuthResult>;
   timeoutMs: number;
   newRequestId: () => string;
 }
@@ -45,6 +47,7 @@ export function defaultBoundaryDeps(): BoundaryDeps {
     fetchImpl: (input, init) => fetch(input, init),
     now: () => new Date(),
     verifyCsrf: (token, reviewCaseId) => verifyCsrfToken(token, reviewCaseId),
+    authHeaders: (config, now) => getBackendAuthHeaders(config, now),
     timeoutMs: Number(process.env.AP_AGENT_BACKEND_TIMEOUT_MS ?? 8_000),
     newRequestId: () => randomUUID(),
   };
@@ -178,8 +181,13 @@ export async function handleCommandRequest(
   // 6. Server-built identity and timestamps. `requested_at` is taken *after* the
   //    authentication timestamp so `authenticated_at <= requested_at` always holds.
   const authenticatedAt = deps.now();
+  const auth = await (deps.authHeaders ?? getBackendAuthHeaders)(config, authenticatedAt);
+  if (!auth.ok) {
+    const authFailure = authFailureCode(auth.kind);
+    return failure(deps, authFailure.status, [authFailure.code]);
+  }
   const headers = {
-    ...buildDevelopmentAuthHeaders(config, authenticatedAt),
+    ...auth.headers,
     "Content-Type": "application/json",
     Accept: "application/json",
   };

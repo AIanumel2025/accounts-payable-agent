@@ -3,25 +3,17 @@ import { PageHeader } from "@/components/application-shell/PageHeader";
 import { DashboardBody } from "@/components/dashboard/DashboardBody";
 import { ErrorState } from "@/components/feedback/ErrorState";
 import { getBackendHealth, getDashboard } from "@/lib/api/dashboard";
-import { ServerConfigError, loadServerEnvConfig } from "@/lib/config/server-env";
+import { requirePageIdentity } from "@/lib/auth/identity";
 import type { HealthCommandMode } from "@/types/api-payloads";
 import styles from "./dashboard-page.module.css";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  let actorRole = "UNKNOWN";
-  let configErrorMessage: string | null = null;
-
-  try {
-    actorRole = loadServerEnvConfig().devActorRole;
-  } catch (error) {
-    if (error instanceof ServerConfigError) {
-      configErrorMessage = error.message;
-    } else {
-      throw error;
-    }
-  }
+  // M11E: development role in local/test mode; in hosted mode the role resolved by FastAPI's database mapping.
+  const identity = await requirePageIdentity();
+  const actorRole = identity.role;
+  const configErrorMessage = identity.configErrorMessage;
 
   const [dashboardResult, healthResult] = await Promise.all([getDashboard(), getBackendHealth()]);
 
@@ -38,6 +30,8 @@ export default async function DashboardPage() {
         title="Dashboard"
         description="Operational overview of invoice processing and human-review load."
         actorRole={actorRole}
+        tenantName={identity.tenantName}
+        hosted={identity.hosted}
         backendHealth={backendHealth}
         commandMode={commandMode}
       />

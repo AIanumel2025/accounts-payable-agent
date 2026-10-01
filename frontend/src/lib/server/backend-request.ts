@@ -1,12 +1,13 @@
 import "server-only";
-import { buildDevelopmentAuthHeaders } from "@/lib/auth/dev-headers";
+import { authFailureCode, getBackendAuthHeaders } from "@/lib/auth/backend-auth";
 import type { ServerEnvConfig } from "@/lib/config/server-env";
 
 /**
  * Server-only FastAPI request boundary (M11A task §5/§10).
  *
- * Every outbound call carries only the four development/test
- * authentication headers this application constructs itself -- it never
+ * Every outbound call carries only the identity this application
+ * constructs itself (`ap_agent` development headers, or in hosted mode the
+ * Clerk session bearer token, see `lib/auth/backend-auth`) -- it never
  * forwards arbitrary browser-supplied headers (task §5: "The Next.js
  * server must not forward arbitrary browser-supplied authentication
  * headers.").
@@ -38,6 +39,8 @@ export interface BackendFailure {
   status?: number;
   /** A message safe to show a user: never a stack trace, SQL, DSN, hostname or filesystem path (task §10). */
   message: string;
+  /** Stable backend error codes (e.g. `TOKEN_EXPIRED`), when the backend sent an error envelope. */
+  errorCodes?: string[];
 }
 
 export type BackendResult<T> = BackendSuccess<T> | BackendFailure;
@@ -59,6 +62,13 @@ function isApiEnvelopeShape(value: unknown): value is ApiEnvelopeShape {
     "errors" in value &&
     Array.isArray((value as { errors: unknown }).errors)
   );
+}
+
+/** Error envelopes (`{request_id, errors, generated_at}`) carry no `status`, so they are read leniently: only string codes survive. */
+function extractErrorCodes(value: unknown): string[] {
+  if (typeof value !== "object" || value === null || !("errors" in value)) return [];
+  const errors = (value as { errors: unknown }).errors;
+  return Array.isArray(errors) ? errors.filter((code): code is string => typeof code === "string" && /^[A-Z][A-Z0-9_:.-]{2,80}$/.test(code)) : [];
 }
 
 function statusToErrorKind(status: number): BackendErrorKind {
@@ -85,7 +95,22 @@ export async function callBackend<T>(
     url.searchParams.set(key, value);
   }
 
-  const headers = buildDevelopmentAuthHeaders(config);
+  // Hosted: `/health` is unauthenticated by design. Everything else (and every development-mode call, as before) carries the caller's identity.
+  let headers: Record<string, string> = {};
+  if (!(path === "/health" && config.authMode === "clerk_jwt")) {
+    const auth = await getBackendAuthHeaders(config);
+    if (!auth.ok) {
+      const failure = authFailureCode(auth.kind);
+      return {
+        ok: false,
+        kind: auth.kind === "AUTH_UNAVAILABLE" ? "UNAVAILABLE" : failure.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN",
+        status: failure.status,
+        message: failure.code,
+        errorCodes: [failure.code],
+      };
+    }
+    headers = auth.headers;
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -125,6 +150,7 @@ export async function callBackend<T>(
       kind: statusToErrorKind(response.status),
       status: response.status,
       message: errors.length > 0 ? errors.join(", ") : `Backend request failed with status ${response.status}.`,
+      errorCodes: extractErrorCodes(parsed),
     };
   }
 

@@ -10,16 +10,16 @@ import styles from "./AppShell.module.css";
  * via `PageHeader`, inside `{children}`, so they can carry page-specific
  * data (e.g. backend health fetched for that page).
  */
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, hosted = false }: { children: ReactNode; hosted?: boolean }) {
   return (
     <div className={styles.shell}>
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
       <div className={styles.body}>
-        <Sidebar />
+        <Sidebar hosted={hosted} />
         <div className={styles.mainColumn}>
-          <MobileNav />
+          <MobileNav hosted={hosted} />
           <main id="main-content" tabIndex={-1} className={styles.main}>
             {children}
           </main>

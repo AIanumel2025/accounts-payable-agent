@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { AccountControls } from "@/components/application-shell/AccountControls";
 import { NAV_ITEMS } from "@/components/application-shell/navigation";
 import { NavList } from "@/components/application-shell/NavList";
 import { ProductIdentity } from "@/components/application-shell/ProductIdentity";
 import styles from "./MobileNav.module.css";
 
 /** Compact mobile navigation (M11A task §8/§13): a toggled drawer below the tablet breakpoint. */
-export function MobileNav() {
+export function MobileNav({ hosted = false }: { hosted?: boolean }) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -28,6 +29,7 @@ export function MobileNav() {
       {isOpen ? (
         <nav id="mobile-nav-drawer" className={styles.drawer} aria-label="Primary">
           <NavList items={NAV_ITEMS} onNavigate={() => setIsOpen(false)} />
+          {hosted ? <AccountControls /> : null}
         </nav>
       ) : null}
     </div>

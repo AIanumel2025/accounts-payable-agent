@@ -16,6 +16,11 @@ import type { ServerEnvConfig } from "@/lib/config/server-env";
  * requests.
  */
 export function buildDevelopmentAuthHeaders(config: ServerEnvConfig, now: Date = new Date()): Record<string, string> {
+  if (config.devTenantId === undefined || config.devActorId === undefined || config.devActorRole === undefined) {
+    // Hosted (`clerk_jwt`) configuration carries no prototype identity: never fabricate one.
+    throw new Error("Development authentication headers are not available in this authentication mode.");
+  }
+
   return {
     "X-Tenant-ID": config.devTenantId,
     "X-Actor-ID": config.devActorId,

@@ -15,11 +15,11 @@ const ROLE_LABELS: Record<string, string> = {
  * actor-id string (task §16 forbids that), which identifies a synthetic
  * local reviewer rather than a permission level.
  */
-export function ActorRoleIndicator({ role }: { role: string }) {
+export function ActorRoleIndicator({ role, hosted = false }: { role: string; hosted?: boolean }) {
   const label = ROLE_LABELS[role] ?? role;
 
   return (
-    <div className={styles.item} title="Current development-authentication role">
+    <div className={styles.item} title={hosted ? "Your role in this organization" : "Current development-authentication role"}>
       <span aria-hidden="true" className={styles.icon}>
         ◇
       </span>

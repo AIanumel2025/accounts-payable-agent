@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { buildDevelopmentAuthHeaders } from "@/lib/auth/dev-headers";
+import { authFailureCode, getBackendAuthHeaders, type BackendAuthResult } from "@/lib/auth/backend-auth";
 import { loadOperationsMode, operationsModesAgree, type OperationsModeConfig } from "@/lib/config/operations-mode";
 import { loadServerEnvConfig, ServerConfigError, type ServerEnvConfig } from "@/lib/config/server-env";
 import { UUID_PATTERN, isRecord } from "@/lib/commands/contract";
@@ -36,6 +36,8 @@ export interface UploadDeps {
   fetchImpl: typeof fetch;
   now: () => Date;
   verifyCsrf: (token: string | null) => boolean;
+  /** Identity presented to FastAPI (M11E). Defaults to development headers or the Clerk bearer token, by auth mode. */
+  authHeaders?: (config: ServerEnvConfig, now: Date) => Promise<BackendAuthResult>;
   timeoutMs: number;
   newRequestId: () => string;
 }
@@ -47,6 +49,7 @@ export function defaultUploadDeps(): UploadDeps {
     fetchImpl: (input, init) => fetch(input, init),
     now: () => new Date(),
     verifyCsrf: (token) => verifyCsrfToken(token, UPLOAD_CSRF_SCOPE),
+    authHeaders: (config, now) => getBackendAuthHeaders(config, now),
     timeoutMs: Number(process.env.AP_AGENT_BACKEND_TIMEOUT_MS ?? 8_000),
     newRequestId: () => randomUUID(),
   };
@@ -184,7 +187,12 @@ export async function handleUploadRequest(request: Request, deps: UploadDeps): P
   const upstreamForm = new FormData();
   upstreamForm.set("file", file, file.name);
 
-  const authHeaders = buildDevelopmentAuthHeaders(config, deps.now());
+  const auth = await (deps.authHeaders ?? getBackendAuthHeaders)(config, deps.now());
+  if (!auth.ok) {
+    const authFailure = authFailureCode(auth.kind);
+    return failure(deps, authFailure.status, [authFailure.code]);
+  }
+  const authHeaders = auth.headers;
   const upstream = await callUpstream(deps, `${config.apiBaseUrl}/api/v1/operations/submissions`, {
     method: "POST",
     headers: { ...authHeaders, Accept: "application/json", "Idempotency-Key": `ap-ui-up-${operationId.toLowerCase()}` },

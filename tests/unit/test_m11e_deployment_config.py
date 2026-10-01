@@ -159,3 +159,29 @@ def test_diagnostics_do_not_echo_arbitrary_mode_values():
 
 def test_load_s3_config_requires_every_value():
     assert load_s3_config({"AP_AGENT_S3_BUCKET": "b"}) is None
+
+
+def test_hosted_api_and_worker_refuse_identical_runtime_and_migration_dsns(monkeypatch):
+    from ap_agent.api.app import create_app
+    from ap_agent.worker.config import load_worker_config
+
+    dsn = "postgresql://owner:pw@db.example.test/ap"
+    _load(monkeypatch)
+    monkeypatch.setenv("AP_AGENT_POSTGRES_DSN", dsn)
+    monkeypatch.setenv("AP_AGENT_POSTGRES_MIGRATION_DSN", dsn)
+
+    with pytest.raises(HostedConfigurationError) as caught:
+        create_app()
+
+    assert caught.value.problems == ("RUNTIME_DSN_EQUALS_MIGRATION_DSN",)
+    assert "pw" not in str(caught.value)
+
+    environment = {
+        "AP_AGENT_ENVIRONMENT": "hosted", "AP_AGENT_ARTIFACT_STORAGE": "s3",
+        "AP_AGENT_S3_ENDPOINT_URL": "https://objects.example.test", "AP_AGENT_S3_BUCKET": "example-bucket",
+        "AP_AGENT_S3_ACCESS_KEY_ID": "a", "AP_AGENT_S3_SECRET_ACCESS_KEY": "b",
+        "AP_AGENT_REFERENCE_DATA_DIRECTORY": "/tmp", "AP_AGENT_POSTGRES_DSN": dsn, "AP_AGENT_POSTGRES_MIGRATION_DSN": dsn,
+    }
+
+    with pytest.raises(HostedConfigurationError):
+        load_worker_config(environment)

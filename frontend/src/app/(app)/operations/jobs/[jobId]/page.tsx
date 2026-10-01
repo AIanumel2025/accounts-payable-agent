@@ -7,7 +7,7 @@ import { JobDetailLive } from "@/components/operations/JobDetailLive";
 import { getBackendHealth } from "@/lib/api/dashboard";
 import { getJobDetail } from "@/lib/api/operations";
 import { loadOperationsMode, operationsModesAgree } from "@/lib/config/operations-mode";
-import { ServerConfigError, loadServerEnvConfig } from "@/lib/config/server-env";
+import { requirePageIdentity } from "@/lib/auth/identity";
 import type { HealthCommandMode } from "@/types/api-payloads";
 import styles from "./job-detail-page.module.css";
 
@@ -16,17 +16,10 @@ export const dynamic = "force-dynamic";
 export default async function JobDetailPage({ params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = await params;
 
-  let actorRole = "UNKNOWN";
-  let configErrorMessage: string | null = null;
-  try {
-    actorRole = loadServerEnvConfig().devActorRole;
-  } catch (error) {
-    if (error instanceof ServerConfigError) {
-      configErrorMessage = error.message;
-    } else {
-      throw error;
-    }
-  }
+  // M11E: development role in local/test mode; in hosted mode the role resolved by FastAPI's database mapping.
+  const identity = await requirePageIdentity();
+  const actorRole = identity.role;
+  const configErrorMessage = identity.configErrorMessage;
 
   const operationsMode = loadOperationsMode();
   const healthResult = await getBackendHealth();
@@ -64,6 +57,8 @@ export default async function JobDetailPage({ params }: { params: Promise<{ jobI
         title={title}
         description="Job status, stage timeline and outcome."
         actorRole={actorRole}
+        tenantName={identity.tenantName}
+        hosted={identity.hosted}
         backendHealth={backendHealth}
         commandMode={commandMode}
       />

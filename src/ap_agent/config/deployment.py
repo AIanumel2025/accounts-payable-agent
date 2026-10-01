@@ -37,6 +37,7 @@ __all__ = [
     "load_s3_config",
     "hosted_configuration_problems",
     "describe_configuration_status",
+    "dsn_separation_problems",
 ]
 
 ENVIRONMENT_ENVIRONMENT_VARIABLE = "AP_AGENT_ENVIRONMENT"
@@ -319,3 +320,17 @@ def describe_configuration_status(source: Optional[Mapping[str, str]] = None) ->
     )
 
     return status
+
+
+def dsn_separation_problems(source: Optional[Mapping[str, str]] = None) -> tuple[str, ...]:
+    """The runtime and migration/admin credentials must differ: a service that
+    serves requests never silently runs as the schema owner."""
+
+    env = _environment(source)
+    runtime = env.get("AP_AGENT_POSTGRES_DSN", "").strip()
+    migration = env.get("AP_AGENT_POSTGRES_MIGRATION_DSN", "").strip()
+
+    if runtime and migration and runtime == migration:
+        return ("RUNTIME_DSN_EQUALS_MIGRATION_DSN",)
+
+    return ()

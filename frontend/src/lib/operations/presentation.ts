@@ -123,6 +123,14 @@ const UPLOAD_ERRORS: Record<string, string> = {
   MALFORMED_RESPONSE: "The backend returned a response this application could not understand. Check Recent jobs before retrying.",
   MALFORMED_MULTIPART: "The upload could not be read.",
   INTERNAL_ERROR: "An unexpected error occurred. Check Recent jobs before retrying.",
+  // M11E hosted authentication and object storage.
+  AUTHENTICATION_REQUIRED: "Your session has ended. Sign in again, then retry the upload.",
+  ORGANIZATION_REQUIRED: "Choose an active organization, then retry the upload.",
+  AUTHENTICATION_UNAVAILABLE: "Your sign-in could not be verified right now. Nothing was uploaded; try again shortly.",
+  IDENTITY_NOT_MAPPED: "Your account is not registered for this organization. Ask an administrator for access.",
+  IDENTITY_MEMBERSHIP_INACTIVE: "Your access to this organization is inactive. Contact an administrator.",
+  TOKEN_EXPIRED: "Your session has expired. Sign in again, then retry the upload.",
+  STORAGE_UNAVAILABLE: "Invoice storage is temporarily unavailable. Nothing was accepted; try again in a moment.",
 };
 
 export function uploadErrorMessages(codes: readonly string[]): string[] {

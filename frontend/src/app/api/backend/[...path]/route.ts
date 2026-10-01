@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildDevelopmentAuthHeaders } from "@/lib/auth/dev-headers";
+import { authFailureCode, getBackendAuthHeaders } from "@/lib/auth/backend-auth";
 import { loadServerEnvConfig, ServerConfigError } from "@/lib/config/server-env";
 import { loadOperationsMode } from "@/lib/config/operations-mode";
 
@@ -29,11 +29,11 @@ import { loadOperationsMode } from "@/lib/config/operations-mode";
  *     FastAPI-supported allow-list (task §5: "allow only query parameters
  *     supported by FastAPI") -- an unsupported parameter is silently
  *     dropped, never forwarded.
- *   - The Next.js server attaches only its own development-header
- *     authentication (task §5) -- it never forwards a browser-supplied
- *     `Authorization`/`X-Tenant-ID`/etc. header, so a client cannot spoof
- *     tenant identity through this route, and tenant identity is never
- *     read from a route/query parameter here.
+ *   - The Next.js server attaches only its own authentication (task §5;
+ *     M11E: the Clerk session bearer token in hosted mode) -- it never
+ *     forwards a browser-supplied `Authorization`/`X-Tenant-ID`/etc.
+ *     header, so a client cannot spoof tenant identity through this route,
+ *     and tenant identity is never read from a route/query parameter here.
  */
 
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -153,7 +153,19 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
     }
   }
 
-  const headers = buildDevelopmentAuthHeaders(config);
+  // Hosted: `/health` is unauthenticated by design. Everything else (and every development-mode call, as before) carries the caller's identity.
+  let headers: Record<string, string> = {};
+  if (!(joinedPath === "health" && config.authMode === "clerk_jwt")) {
+    const auth = await getBackendAuthHeaders(config);
+    if (!auth.ok) {
+      const failure = authFailureCode(auth.kind);
+      return NextResponse.json(
+        { errors: [failure.code], generated_at: new Date().toISOString() },
+        { status: failure.status, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    headers = auth.headers;
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 

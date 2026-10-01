@@ -1,0 +1,112 @@
+name: M11E hosted deployment artefacts
+
+# Fast, focused checks on the hosted-deployment artefacts only: the Render
+# Blueprint, and the three production Docker images (built, then scanned for
+# secrets). It deliberately does NOT re-run the real PostgreSQL, PaddleOCR or
+# browser suites: those run once each in `m8-postgres-acceptance.yml` (real
+# PaddleOCR + full regression, including the hosted identity tests) and
+# `m11a-frontend.yml` (lint, types, unit/contract tests, browser suites and the
+# hosted-mode acceptance run).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "render.yaml"
+      - "docker/*.Dockerfile"
+      - ".dockerignore"
+      - "scripts/verify_render_blueprint.py"
+      - "scripts/migrate.py"
+      - "frontend/**"
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/m11e-hosted.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m11e-hosted-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  blueprint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "PyYAML>=6,<7"
+      - name: Verify render.yaml against the deployment rules
+        run: python scripts/verify_render_blueprint.py
+
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, web, worker]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the ${{ matrix.image }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.image }}.Dockerfile
+          load: true
+          push: false
+          tags: ap-agent-${{ matrix.image }}:ci
+          # A well-formed but fake publishable key: public by design, inlined into the bundle.
+          build-args: |
+            ${{ matrix.image == 'web' && 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_Y2xlcmsuYWNjb3VudHMuZXhhbXBsZS50ZXN0JA==' || '' }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: The image runs as a non-root user and carries no credential files
+        run: |
+          user="$(docker run --rm --entrypoint id ap-agent-${{ matrix.image }}:ci -un)"
+          echo "runs as: ${user}"
+          test "${user}" != "root"
+          ! docker run --rm --entrypoint sh ap-agent-${{ matrix.image }}:ci -c 'ls -a /app 2>/dev/null | grep -E "^\.env"'
+
+      - name: Scan the image's application files for secrets
+        run: |
+          docker run --rm --entrypoint sh ap-agent-${{ matrix.image }}:ci -c '
+            roots=""; for d in /app /opt/ap-agent; do [ -d "$d" ] && roots="$roots $d"; done
+            ! grep -rIE --exclude-dir=node_modules --exclude-dir=site-packages \
+              "sk_(live|test)_[A-Za-z0-9]{8,}|postgres(ql)?://[^ \"'"'"']+:[^ \"'"'"']+@|-----BEGIN (RSA |EC )?PRIVATE KEY|AKIA[0-9A-Z]{12,}" $roots
+          '
+
+      - name: Web bundle contains no server-only value (also enforced during the image build)
+        if: matrix.image == 'web'
+        run: |
+          docker run --rm --entrypoint sh ap-agent-web:ci -c '
+            ! grep -rIlE "CLERK_SECRET_KEY|AP_AGENT_POSTGRES|AP_AGENT_S3_|AP_AGENT_CLERK_ISSUER|AP_AGENT_API_BASE_URL|AP_AGENT_API_HOSTPORT" /app/.next/static
+          '
+
+      - name: API image starts, answers liveness and refuses an unsafe hosted configuration
+        if: matrix.image == 'api'
+        run: |
+          # Fail closed: hosted + prototype authentication must not start.
+          if docker run --rm -e AP_AGENT_ENVIRONMENT=hosted -e AP_AGENT_POSTGRES_DSN=postgresql://u:p@db.invalid/d ap-agent-api:ci; then
+            echo "::error::the API started in hosted mode without Clerk configuration"; exit 1
+          fi
+          docker run -d --name api -p 8000:8000 -e AP_AGENT_POSTGRES_DSN=postgresql://u:p@db.invalid/d ap-agent-api:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/health/live && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8000/health/live
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health/ready)"
+          test "${code}" = "503"   # no database reachable: not ready
+          docker logs api 2>&1 | grep -E "db\.invalid|u:p@" && exit 1 || true
+          docker rm -f api
+
+      - name: Worker image refuses unsafe hosted configuration without starting the OCR engine
+        if: matrix.image == 'worker'
+        run: |
+          if docker run --rm -e AP_AGENT_ARTIFACT_STORAGE=local -e AP_AGENT_ARTIFACT_ROOT=/tmp/x ap-agent-worker:ci python -m ap_agent.worker --once; then
+            echo "::error::the worker started in hosted mode with local storage"; exit 1
+          fi

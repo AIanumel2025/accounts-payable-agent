@@ -98,6 +98,14 @@ def create_app(
         dsn = load_dsn(resolved_memory_config)
 
     resolved_api_config = api_config or load_api_config()
+
+    from ap_agent.config.deployment import DeploymentEnvironment, HostedConfigurationError, dsn_separation_problems
+
+    if resolved_api_config.environment is DeploymentEnvironment.HOSTED:
+        separation = dsn_separation_problems()
+
+        if separation:
+            raise HostedConfigurationError(separation)
     resolved_interface_config = interface_config or default_interface_config()
 
     app = FastAPI(

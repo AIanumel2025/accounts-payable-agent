@@ -6,7 +6,7 @@ import { OperationsConsole } from "@/components/operations/OperationsConsole";
 import { getBackendHealth } from "@/lib/api/dashboard";
 import { listJobs } from "@/lib/api/operations";
 import { loadOperationsMode, operationsModesAgree } from "@/lib/config/operations-mode";
-import { ServerConfigError, loadServerEnvConfig } from "@/lib/config/server-env";
+import { requirePageIdentity } from "@/lib/auth/identity";
 import { issueCsrfToken } from "@/lib/server/csrf";
 import { UPLOAD_CSRF_SCOPE } from "@/lib/server/upload-boundary";
 import type { HealthCommandMode } from "@/types/api-payloads";
@@ -15,18 +15,10 @@ import styles from "./operations-page.module.css";
 export const dynamic = "force-dynamic";
 
 export default async function OperationsPage() {
-  let actorRole = "UNKNOWN";
-  let configErrorMessage: string | null = null;
-
-  try {
-    actorRole = loadServerEnvConfig().devActorRole;
-  } catch (error) {
-    if (error instanceof ServerConfigError) {
-      configErrorMessage = error.message;
-    } else {
-      throw error;
-    }
-  }
+  // M11E: development role in local/test mode; in hosted mode the role resolved by FastAPI's database mapping.
+  const identity = await requirePageIdentity();
+  const actorRole = identity.role;
+  const configErrorMessage = identity.configErrorMessage;
 
   const operationsMode = loadOperationsMode();
   const healthResult = await getBackendHealth();
@@ -80,6 +72,8 @@ export default async function OperationsPage() {
         title="Operations"
         description="Upload invoices, follow them through the pipeline and open the resulting review cases."
         actorRole={actorRole}
+        tenantName={identity.tenantName}
+        hosted={identity.hosted}
         backendHealth={backendHealth}
         commandMode={commandMode}
       />

@@ -731,3 +731,21 @@ This project is licensed under the [MIT License](LICENSE).
 ## Author
 
 Created by [Tony Anumel](https://github.com/AIanumel2025).
+
+## Hosted deployment (M11E)
+
+A private, authenticated hosted version runs on Render: a public Next.js service, a private FastAPI service
+and one background OCR worker, with Clerk (Organizations) for sign-in, Cloudflare R2 for uploaded invoices and
+Neon for PostgreSQL. Clerk proves identity and the active organization; a database identity mapping (managed
+with `scripts/manage_identity_mappings.py`) decides the internal tenant and role. FastAPI verifies the Clerk
+session token itself.
+
+* `render.yaml` – the Blueprint (checked by `scripts/verify_render_blueprint.py`); `docker/*.Dockerfile` – the
+  three production images.
+* `AP_AGENT_ENVIRONMENT=hosted` makes startup fail closed (no prototype headers, no local filesystem storage,
+  Clerk and S3 settings required).
+* Local development is unchanged (`prototype_headers`, local filesystem).
+* Local hosted-path acceptance (Clerk-style cookies, mocked S3, real PostgreSQL and worker):
+  `cd frontend && npm run test:e2e:hosted` (needs `AP_AGENT_TEST_POSTGRES_DSN`).
+* Setup, environment variables, migration, rollback and rotation: [docs/m11e_deployment_runbook.md](docs/m11e_deployment_runbook.md);
+  what was and was not verified: [docs/m11e_hosted_deployment_report.md](docs/m11e_hosted_deployment_report.md).

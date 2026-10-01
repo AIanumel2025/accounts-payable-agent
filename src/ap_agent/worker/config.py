@@ -111,6 +111,11 @@ def load_worker_config(environment: dict[str, str] | None = None) -> WorkerConfi
         if env.get(TENANT_SCOPE_ENVIRONMENT_VARIABLE, "").strip():
             problems.append("HOSTED_FORBIDS_WORKER_TENANT_SCOPE")
 
+    if environment is DeploymentEnvironment.HOSTED:
+        from ap_agent.config.deployment import dsn_separation_problems
+
+        problems.extend(dsn_separation_problems(env))
+
     if problems:
         raise HostedConfigurationError(tuple(problems))
 

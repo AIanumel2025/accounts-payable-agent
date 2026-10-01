@@ -18,6 +18,8 @@ dev = [
     "pytest>=8,<9",
     # M11E: mocked S3 service for the storage contract tests (test-only).
     "moto[s3,server]>=5,<6",
+    # M11E: static check of the Render Blueprint (scripts/verify_render_blueprint.py).
+    "PyYAML>=6,<7",
 ]
 pdf = [
     # PyMuPDF. Pinned to the version recorded in the notebook run

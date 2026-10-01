@@ -43,6 +43,12 @@ on:
       - "src/ap_agent/repositories/review_repository.py"
       - "src/ap_agent/repositories/postgres_memory_repository.py"
       - "tests/support/review_fixtures.py"
+      # M11E: authentication, identity mapping, object storage and hosted-mode acceptance.
+      - "src/ap_agent/auth/**"
+      - "src/ap_agent/config/**"
+      - "scripts/manage_identity_mappings.py"
+      - "tests/unit/test_m11e_*.py"
+      - "tests/integration/test_m11e_*.py"
       - "pyproject.toml"
       - ".github/workflows/m11a-frontend.yml"
   workflow_dispatch: {}
@@ -83,7 +89,7 @@ jobs:
         working-directory: .
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[api,postgres,dev]"
+          pip install -e ".[api,postgres,s3,dev]"
 
       - name: Install frontend dependencies
         run: npm ci
@@ -126,6 +132,15 @@ jobs:
       - name: M11D unit tests (no database)
         working-directory: .
         run: python -m pytest -v -m "not requires_postgres" tests/unit/test_m11d_*.py
+
+      # M11E: Clerk token verification, hosted configuration, the authentication
+      # dependency, object-storage contract (fake client and mocked S3 service), worker
+      # hosted configuration and the Render Blueprint check. No database, no OCR.
+      - name: M11E auth, storage, configuration and Blueprint tests (no database)
+        working-directory: .
+        run: >
+          python -m pytest -v -m "not requires_postgres"
+          tests/unit/test_m11e_*.py tests/integration/test_m11e_s3_boto3_mock.py
 
       - name: Unit and component tests
         run: npm run test
@@ -218,7 +233,7 @@ jobs:
         working-directory: .
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[api,postgres,dev,preprocessing,pdf,ocr-tesseract]"
+          pip install -e ".[api,postgres,s3,dev,preprocessing,pdf,ocr-tesseract]"
 
       - name: Install Tesseract OCR system binary
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
@@ -343,4 +358,29 @@ jobs:
         with:
           name: playwright-report-real-operations
           path: frontend/playwright-report-real-operations/
+          retention-days: 14
+
+      # M11E: the hosted-mode path against the real database -- Clerk-style session
+      # cookies verified by Next.js and, independently, by FastAPI; the database
+      # identity mapping (registered through the administrative CLI); uploads through
+      # the S3 adapter (a mocked S3 service stands in for R2); the separate worker
+      # reading them back; review, resume and completion. This is the single
+      # authoritative hosted-path run: the fast auth/storage unit and contract tests
+      # run in `m11e-hosted.yml` and the real PaddleOCR coverage stays in
+      # `m8-postgres-acceptance.yml`.
+      - name: M11E -- run hosted-mode acceptance (clerk_jwt + S3 + worker + PostgreSQL)
+        env:
+          AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
+          AP_AGENT_WORKER_OCR_PROVIDER: tesseract
+          AP_AGENT_SCREENSHOT_DIR: ${{ github.workspace }}/hosted-screenshots
+        run: npm run test:e2e:hosted
+
+      - name: Upload M11E hosted Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-hosted
+          path: |
+            frontend/playwright-report-hosted/
+            hosted-screenshots/
           retention-days: 14

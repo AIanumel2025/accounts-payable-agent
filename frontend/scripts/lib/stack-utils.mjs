@@ -206,3 +206,134 @@ export async function cleanupM11dTenants(testDsn, tenantIds) {
   const exitCode = await runOnceAndWait(PYTHON_BIN, args, { cwd: REPO_ROOT, env: { ...process.env, AP_AGENT_TEST_POSTGRES_DSN: testDsn } });
   if (exitCode !== 0) console.warn(`Cleanup exited with code ${exitCode}; the tenants' data is isolated and inert either way.`);
 }
+
+// ---------------------------------------------------------------------------
+// M11E hosted-mode acceptance helpers: Clerk-style bearer authentication,
+// S3-compatible object storage (a mocked S3 service, not a real R2 bucket) and
+// the database identity mapping. Test infrastructure only.
+// ---------------------------------------------------------------------------
+
+export const MANAGE_IDENTITY_SCRIPT = path.join(REPO_ROOT, "scripts", "manage_identity_mappings.py");
+
+/** Runs the administrative identity CLI with the owner DSN as the migration/admin DSN (env only, never argv). */
+export async function runIdentityCli(testDsn, args) {
+  const env = { ...process.env, AP_AGENT_POSTGRES_MIGRATION_DSN: testDsn };
+  delete env.AP_AGENT_TEST_POSTGRES_DSN;
+  const exitCode = await runOnceAndWait(PYTHON_BIN, [MANAGE_IDENTITY_SCRIPT, ...args], { cwd: REPO_ROOT, env });
+  if (exitCode !== 0) throw new Error(`manage_identity_mappings ${args[0]} failed (exit code ${exitCode}).`);
+}
+
+/** A mocked S3 service (moto server) on localhost -- the S3 API the Cloudflare R2 adapter speaks. */
+export function startMotoServer(port) {
+  return spawnProcess(PYTHON_BIN, ["-m", "moto.server", "-H", "127.0.0.1", "-p", String(port)], {
+    cwd: REPO_ROOT,
+    env: { ...process.env, AWS_ACCESS_KEY_ID: "testing", AWS_SECRET_ACCESS_KEY: "testing" },
+    stdio: "ignore",
+  });
+}
+
+export async function createBucket(endpoint, bucket) {
+  const code = await runOnceAndWait(
+    PYTHON_BIN,
+    ["-c", "import boto3,sys;boto3.client('s3',endpoint_url=sys.argv[1],region_name='us-east-1',aws_access_key_id='testing',aws_secret_access_key='testing').create_bucket(Bucket=sys.argv[2])", endpoint, bucket],
+    { cwd: REPO_ROOT, env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" } },
+  );
+  if (code !== 0) throw new Error("Creating the test bucket failed.");
+}
+
+/** Lists every object key in the bucket as JSON on stdout (read by the runner, never printed with credentials). */
+export function listBucketKeys(endpoint, bucket) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      PYTHON_BIN,
+      ["-c", "import boto3,json,sys;c=boto3.client('s3',endpoint_url=sys.argv[1],region_name='us-east-1',aws_access_key_id='testing',aws_secret_access_key='testing');print(json.dumps([o['Key'] for o in c.list_objects_v2(Bucket=sys.argv[2]).get('Contents',[])]))", endpoint, bucket],
+      { cwd: REPO_ROOT, env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" } },
+    );
+    let out = "";
+    child.stdout.on("data", (chunk) => (out += chunk));
+    child.once("error", reject);
+    child.once("exit", (code) => (code === 0 ? resolve(JSON.parse(out)) : reject(new Error("Listing the test bucket failed."))));
+  });
+}
+
+const NO_PROXY_ENV = { NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
+
+export function startHostedFastApi({ port, runtimeDsn, issuer, jwksUrl, authorizedParty, s3Endpoint, bucket }) {
+  return spawnProcess(
+    PYTHON_BIN,
+    ["-m", "uvicorn", "ap_agent.api.app:create_app", "--factory", "--host", "127.0.0.1", "--port", String(port), "--log-level", "warning"],
+    {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        ...NO_PROXY_ENV,
+        AP_AGENT_POSTGRES_DSN: runtimeDsn,
+        PYTHONPATH: path.join(REPO_ROOT, "src"),
+        // `test`, not `hosted`: plain-http localhost endpoints are allowed. Every other hosted rule applies.
+        AP_AGENT_ENVIRONMENT: "test",
+        AP_AGENT_AUTH_MODE: "clerk_jwt",
+        AP_AGENT_CLERK_ISSUER: issuer,
+        AP_AGENT_CLERK_JWKS_URL: jwksUrl,
+        AP_AGENT_CLERK_AUTHORIZED_PARTIES: authorizedParty,
+        AP_AGENT_ARTIFACT_STORAGE: "s3",
+        AP_AGENT_S3_ENDPOINT_URL: s3Endpoint,
+        AP_AGENT_S3_BUCKET: bucket,
+        AP_AGENT_S3_ACCESS_KEY_ID: "testing",
+        AP_AGENT_S3_SECRET_ACCESS_KEY: "testing",
+        AP_AGENT_S3_REGION: "auto",
+        AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES: "true",
+        AP_AGENT_ENABLE_OPERATIONS: "true",
+        AP_AGENT_TEST_POSTGRES_DSN: "",
+      },
+    },
+  );
+}
+
+export function startHostedWorker({ runtimeDsn, tenantId, s3Endpoint, bucket, ocrProvider, scratchDirectory }) {
+  return spawnProcess(PYTHON_BIN, ["-m", "ap_agent.worker"], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      ...NO_PROXY_ENV,
+      AP_AGENT_POSTGRES_DSN: runtimeDsn,
+      PYTHONPATH: path.join(REPO_ROOT, "src"),
+      AP_AGENT_ENVIRONMENT: "test",
+      AP_AGENT_ENABLE_WORKER_EXECUTION: "true",
+      AP_AGENT_ARTIFACT_STORAGE: "s3",
+      AP_AGENT_S3_ENDPOINT_URL: s3Endpoint,
+      AP_AGENT_S3_BUCKET: bucket,
+      AP_AGENT_S3_ACCESS_KEY_ID: "testing",
+      AP_AGENT_S3_SECRET_ACCESS_KEY: "testing",
+      AP_AGENT_S3_REGION: "auto",
+      AP_AGENT_PHASE_ARTIFACT_ROOT: scratchDirectory,
+      TMPDIR: scratchDirectory,
+      AP_AGENT_REFERENCE_DATA_DIRECTORY: REFERENCE_DATA_DIRECTORY,
+      AP_AGENT_WORKER_TENANT_ID: tenantId,
+      AP_AGENT_WORKER_OCR_PROVIDER: ocrProvider,
+      AP_AGENT_TEST_POSTGRES_DSN: "",
+    },
+  });
+}
+
+export function startHostedNext({ port, apiPort, publishableKey, secretKey, jwtKey, authorizedParty }) {
+  return spawnProcess("npm", ["run", "start", "--", "--port", String(port)], {
+    cwd: FRONTEND_ROOT,
+    env: {
+      ...process.env,
+      ...NO_PROXY_ENV,
+      AP_AGENT_API_BASE_URL: `http://127.0.0.1:${apiPort}`,
+      AP_AGENT_FRONTEND_AUTH_MODE: "clerk_jwt",
+      AP_AGENT_ENVIRONMENT: "test",
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: publishableKey,
+      CLERK_SECRET_KEY: secretKey,
+      CLERK_JWT_KEY: jwtKey,
+      AP_AGENT_CLERK_AUTHORIZED_PARTIES: authorizedParty,
+      AP_AGENT_FRONTEND_CSRF_SECRET: "hosted-acceptance-csrf-secret-0123456789",
+      AP_AGENT_FRONTEND_REVIEW_COMMAND_MODE: "commit",
+      AP_AGENT_FRONTEND_OPERATIONS_MODE: "enabled",
+      AP_AGENT_BACKEND_TIMEOUT_MS: "25000",
+      NEXT_TELEMETRY_DISABLED: "1",
+      AP_AGENT_TEST_POSTGRES_DSN: "",
+    },
+  });
+}

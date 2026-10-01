@@ -83,3 +83,15 @@
   font-size: var(--font-size-sm);
   margin-bottom: var(--space-4);
 }
+
+.accountActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+a.retryButton {
+  text-decoration: none;
+  display: inline-block;
+}

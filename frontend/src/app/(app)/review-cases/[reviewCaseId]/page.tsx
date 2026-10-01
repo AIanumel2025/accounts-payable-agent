@@ -14,7 +14,7 @@ import { ResumeJobPanelLive } from "@/components/operations/ResumeJobPanelLive";
 import { deriveWorkspaceState, roleLabel } from "@/lib/commands/presentation";
 import { issueCsrfToken } from "@/lib/server/csrf";
 import { parseSafeReturnTo } from "@/lib/api/review-queue-query";
-import { ServerConfigError, loadServerEnvConfig } from "@/lib/config/server-env";
+import { requirePageIdentity } from "@/lib/auth/identity";
 import type { HealthCommandMode, InvoiceDetailPayload } from "@/types/api-payloads";
 import styles from "./review-case-detail-page.module.css";
 
@@ -37,17 +37,10 @@ export default async function ReviewCaseDetailPage({
   const resolvedSearchParams = await searchParams;
   const returnTo = parseSafeReturnTo(resolvedSearchParams.from);
 
-  let actorRole = "UNKNOWN";
-  let configErrorMessage: string | null = null;
-  try {
-    actorRole = loadServerEnvConfig().devActorRole;
-  } catch (error) {
-    if (error instanceof ServerConfigError) {
-      configErrorMessage = error.message;
-    } else {
-      throw error;
-    }
-  }
+  // M11E: development role in local/test mode; in hosted mode the role resolved by FastAPI's database mapping.
+  const identity = await requirePageIdentity();
+  const actorRole = identity.role;
+  const configErrorMessage = identity.configErrorMessage;
 
   const commandMode = loadCommandMode();
   const actionsEnabled = commandMode.valid && commandMode.mode !== "disabled";
@@ -97,6 +90,8 @@ export default async function ReviewCaseDetailPage({
             : "Read-only invoice detail and review history."
         }
         actorRole={actorRole}
+        tenantName={identity.tenantName}
+        hosted={identity.hosted}
         backendHealth={backendHealth}
         commandMode={backendCommandMode}
         frontendMode={commandMode.valid ? commandMode.mode : "disabled"}

@@ -8,7 +8,7 @@ import { QueueResultsTable } from "@/components/review-queue/QueueResultsTable";
 import { getBackendHealth } from "@/lib/api/dashboard";
 import { listReviewCases } from "@/lib/api/review-cases";
 import { filtersToUrlSearchParams, hasActiveFilters, parseQueueFiltersFromSearchParams } from "@/lib/api/review-queue-query";
-import { ServerConfigError, loadServerEnvConfig } from "@/lib/config/server-env";
+import { requirePageIdentity } from "@/lib/auth/identity";
 import type { HealthCommandMode } from "@/types/api-payloads";
 import styles from "./review-queue-page.module.css";
 
@@ -38,17 +38,10 @@ export default async function ReviewQueuePage({
   const { filters } = parseQueueFiltersFromSearchParams(toUrlSearchParams(resolvedSearchParams));
   const returnTo = `/review-queue?${filtersToUrlSearchParams(filters).toString()}`;
 
-  let actorRole = "UNKNOWN";
-  let configErrorMessage: string | null = null;
-  try {
-    actorRole = loadServerEnvConfig().devActorRole;
-  } catch (error) {
-    if (error instanceof ServerConfigError) {
-      configErrorMessage = error.message;
-    } else {
-      throw error;
-    }
-  }
+  // M11E: development role in local/test mode; in hosted mode the role resolved by FastAPI's database mapping.
+  const identity = await requirePageIdentity();
+  const actorRole = identity.role;
+  const configErrorMessage = identity.configErrorMessage;
 
   const [queueResult, healthResult] = await Promise.all([listReviewCases(filters), getBackendHealth()]);
 
@@ -64,6 +57,8 @@ export default async function ReviewQueuePage({
         title="Review queue"
         description="Invoices currently awaiting human review. Read-only: claim, release, and decision controls arrive in a later milestone."
         actorRole={actorRole}
+        tenantName={identity.tenantName}
+        hosted={identity.hosted}
         backendHealth={backendHealth}
         commandMode={commandMode}
       />
