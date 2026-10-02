@@ -285,3 +285,82 @@ def test_executor_crash_is_the_runners_job_to_record_not_the_handlers():
     response = process_sqs_event({"Records": [_record(job, message_id="x")]}, runner=runner)
 
     assert response == {"batchItemFailures": [{"itemIdentifier": "x"}]}
+
+
+# -- isolated job process ------------------------------------------------------------------------------
+
+
+import sys  # noqa: E402
+
+from ap_agent.worker.lambda_handler import IsolatedJobRunner  # noqa: E402
+
+
+class _RunningOps(FakeOps):
+    def __init__(self, job):
+        super().__init__(replace(job, status=WorkflowJobStatus.RUNNING))
+
+
+def _isolated(code: str, job, *, budget=None):
+    ops = _RunningOps(job)
+    runner = IsolatedJobRunner(ops, command=[sys.executable, "-c", code])
+    runner.time_budget_seconds = budget
+    return runner, ops
+
+
+def test_isolated_runner_passes_the_job_and_tenant_ids_to_the_child_and_records_nothing_on_success():
+    job = _job()
+    code = "import sys; assert len(sys.argv) == 3 and sys.argv[1] and sys.argv[2]; sys.exit(0)"
+    runner, ops = _isolated(code, job)
+
+    result = runner.execute_claimed(replace(job, status=WorkflowJobStatus.RUNNING))
+
+    assert ops.finished == [] and result.status is WorkflowJobStatus.RUNNING  # the child is the one that finishes jobs
+
+
+def test_a_killed_or_crashed_child_is_recorded_as_a_failed_job_by_the_parent():
+    job = _job()
+    runner, ops = _isolated("import sys; sys.exit(137)", job)
+
+    result = runner.execute_claimed(replace(job, status=WorkflowJobStatus.RUNNING))
+
+    assert ops.finished[0]["error_code"] == "WORKER_PROCESS_FAILED"
+    assert result.status is WorkflowJobStatus.FAILED
+
+
+def test_a_child_that_runs_out_of_time_is_stopped_and_the_job_failed():
+    job = _job()
+    runner, ops = _isolated("import time; time.sleep(30)", job, budget=1.0)
+    runner.MINIMUM_TIMEOUT_SECONDS = 0.3
+
+    result = runner.execute_claimed(replace(job, status=WorkflowJobStatus.RUNNING))
+
+    assert ops.finished[0]["error_code"] == "WORKER_TIMEOUT" and result.status is WorkflowJobStatus.FAILED
+
+
+def test_a_child_that_already_finished_the_job_is_never_overwritten():
+    job = _job()
+    runner, ops = _isolated("import sys; sys.exit(1)", job)
+    ops.job = replace(ops.job, status=WorkflowJobStatus.REVIEW_REQUIRED)  # the child recorded its outcome first
+
+    result = runner.execute_claimed(replace(job, status=WorkflowJobStatus.RUNNING))
+
+    assert ops.finished == [] and result.status is WorkflowJobStatus.REVIEW_REQUIRED
+
+
+def test_the_job_process_entry_point_refuses_bad_arguments_without_importing_ocr():
+    from ap_agent.worker import run_job
+
+    assert run_job.main([]) == run_job.EXIT_NOT_RUNNABLE
+    assert run_job.main(["not-a-uuid", "x"]) == run_job.EXIT_NOT_RUNNABLE
+    assert "paddle" not in sys.modules and "paddleocr" not in sys.modules
+
+
+def test_the_lambda_handler_module_imports_no_ocr_library():
+    import subprocess
+
+    out = subprocess.run(
+        [sys.executable, "-c", "import sys, ap_agent.worker.lambda_handler; print(sorted(m for m in sys.modules if m.split('.')[0] in {'paddle','paddleocr','cv2','numpy','pytesseract','fitz'}))"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    assert out == "[]"

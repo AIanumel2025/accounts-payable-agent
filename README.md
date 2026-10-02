@@ -749,3 +749,16 @@ session token itself.
   `cd frontend && npm run test:e2e:hosted` (needs `AP_AGENT_TEST_POSTGRES_DSN`).
 * Setup, environment variables, migration, rollback and rotation: [docs/m11e_deployment_runbook.md](docs/m11e_deployment_runbook.md);
   what was and was not verified: [docs/m11e_hosted_deployment_report.md](docs/m11e_hosted_deployment_report.md).
+
+## AWS deployment (M11E.1)
+
+A cost-optimised, scale-to-zero AWS deployment lives beside the Render one (which is unchanged): a public Next.js
+Lambda (Function URL), an IAM-protected FastAPI Lambda, an SQS FIFO-triggered PaddleOCR worker Lambda, a private S3
+bucket with direct browser uploads (presigned POST, validated on finalize), a non-public migration Lambda, Neon
+PostgreSQL and Clerk. Infrastructure is SAM/CloudFormation under `deploy/aws/` (no VPC, NAT, load balancer, RDS or
+provisioned concurrency; secrets are SSM SecureStrings read at runtime).
+
+* Procedure, secrets, migration, tenant registration, smoke tests, logs/DLQ, rollback and teardown:
+  [docs/m11e1_aws_deployment_runbook.md](docs/m11e1_aws_deployment_runbook.md).
+* Architecture, security boundaries, tests, PaddleOCR benchmark, deviations and what remains unverified:
+  [docs/m11e1_aws_go_live_report.md](docs/m11e1_aws_go_live_report.md).

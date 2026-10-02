@@ -3,20 +3,19 @@
 
 Answers one question for the AWS deployment: can the OCR worker finish a representative invoice comfortably inside
 AWS Lambda's 15-minute limit (target: no more than 12 minutes)? It runs the production worker path -- the same
-`build_runner` / `DocumentJobExecutor` / PaddleOCR engine the Lambda handler uses -- against a real PostgreSQL
-database, one queued upload job per invoice, and reports:
+claim -> fresh job process (`python -m ap_agent.worker.run_job`) -> `DocumentJobExecutor` -> PaddleOCR engine that the
+Lambda handler uses -- against a real PostgreSQL database, one queued upload job per invoice, and reports:
 
-  * engine initialisation time (model load; paid once per Lambda cold start),
-  * per-document wall-clock time, outcome and OCR provider,
-  * peak resident memory of the process.
+  * per-document wall-clock time (INCLUDING the engine initialisation each job process pays), outcome and exit status,
+  * the peak resident memory of each job process (the number that must fit the Lambda memory size).
 
 It exits non-zero if any document exceeds `--max-seconds` (default 720 = 12 minutes), if the engine falls back from
 PaddleOCR, or if a job ends FAILED. Nothing is substituted: a PaddleOCR failure is a failure, never a Tesseract pass.
 
 Run it inside the worker image under a CPU/memory ceiling that approximates the Lambda size under test (Lambda grants
-roughly 1 vCPU per 1,769 MB: 4096 MB ~ 2.3 vCPU), e.g. in CI:
+roughly 1 vCPU per 1,769 MB: 8192 MB ~ 4.6 vCPU), e.g. in CI:
 
-    docker run --cpus 2.3 --memory 4096m --network host --entrypoint python <worker-image> scripts/benchmark_worker.py
+    docker run --cpus 4 --memory 8192m --network host --entrypoint python <worker-image> scripts/benchmark_worker.py
 
 Environment: AP_AGENT_POSTGRES_DSN (runtime role), AP_AGENT_POSTGRES_MIGRATION_DSN (migrations + tenant registration),
 AP_AGENT_REFERENCE_DATA_DIRECTORY. The database must be disposable. Uploads use a local scratch artifact root: the
@@ -29,7 +28,6 @@ import argparse
 import json
 import mimetypes
 import os
-import resource
 import sys
 import tempfile
 import time
@@ -39,10 +37,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
-def _peak_rss_mb() -> float:
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0  # Linux: kilobytes
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--fixtures-dir", type=Path, default=Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "invoices")
@@ -50,7 +44,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=None, help="Write the JSON summary here as well.")
     arguments = parser.parse_args()
 
-    os.environ.setdefault("AP_AGENT_ENABLE_WORKER_EXECUTION", "true")
+    os.environ.setdefault("AP_AGENT_ENABLE_WORKER_EXECUTION", "true")  # inherited by every job process
     os.environ.setdefault("AP_AGENT_WORKER_OCR_PROVIDER", "paddleocr")
     scratch = Path(tempfile.mkdtemp(prefix="ap-agent-benchmark-"))
     os.environ["AP_AGENT_ARTIFACT_ROOT"] = str(scratch / "artifacts")
@@ -67,8 +61,7 @@ def main() -> int:
     from ap_agent.repositories.operations_repository import OperationsRepository
     from ap_agent.repositories.postgres_memory_repository import PostgresMemoryRepository
     from ap_agent.services.operations_submission import submit_upload
-    from ap_agent.worker.__main__ import build_runner
-    from ap_agent.worker.config import load_worker_config
+    import subprocess
 
     memory_config = MemoryConfig(
         transport_policy=PostgresTransportPolicy(
@@ -88,12 +81,6 @@ def main() -> int:
         tenant_id=tenant_id, tenant_key=f"benchmark-{tenant_id.hex[:8]}", display_name="Benchmark tenant"
     )
 
-    config = load_worker_config()
-    started = time.perf_counter()
-    runner = build_runner(config, warm_up_ocr=True)  # raises OcrUnavailableError if PaddleOCR cannot be constructed
-    init_seconds = time.perf_counter() - started
-    print(f"engine initialised in {init_seconds:.1f}s (peak RSS {_peak_rss_mb():.0f} MB)", flush=True)
-
     operations = OperationsRepository(dsn, memory_config)
     store = LocalFilesystemArtifactStore(Path(os.environ["AP_AGENT_ARTIFACT_ROOT"]))
     actor = InterfaceActor(actor_id="benchmark", tenant_id=tenant_id, role=InterfaceRole.AP_OPERATOR, authenticated_at=interface_utc_now())
@@ -112,9 +99,14 @@ def main() -> int:
         job = operations.claim_job(submission.job.job_id, tenant_id=tenant_id)
         assert job is not None
         started = time.perf_counter()
-        finished = runner.execute_claimed(job)
+        child = subprocess.run(
+            [sys.executable, "-m", "ap_agent.worker.run_job", str(job.job_id), str(tenant_id)],
+            capture_output=True, text=True, timeout=arguments.max_seconds + 120, check=False,
+        )
         elapsed = time.perf_counter() - started
-        ok = finished.status is not WorkflowJobStatus.FAILED and elapsed <= arguments.max_seconds
+        finished = operations.get_job(tenant_id, job.job_id)
+        peak = next((int(line.split("=", 1)[1]) for line in child.stdout.splitlines() if line.startswith("RUN_JOB_PEAK_RSS_MB=")), None)
+        ok = child.returncode == 0 and finished.status is not WorkflowJobStatus.FAILED and elapsed <= arguments.max_seconds
         failed = failed or not ok
         rows.append(
             {
@@ -124,17 +116,18 @@ def main() -> int:
                 "status": finished.status.value,
                 "error_code": finished.error_code,
                 "within_limit": elapsed <= arguments.max_seconds,
-                "peak_rss_mb": round(_peak_rss_mb()),
+                "exit_code": child.returncode,
+                "job_process_peak_rss_mb": peak,
+                **({"stderr_tail": child.stderr[-600:]} if child.returncode else {}),
             }
         )
         print(json.dumps(rows[-1]), flush=True)
 
     summary = {
         "provider": "paddleocr",
-        "engine_init_seconds": round(init_seconds, 1),
         "max_seconds_allowed": arguments.max_seconds,
         "slowest_seconds": max((row["seconds"] for row in rows), default=0),
-        "peak_rss_mb": round(_peak_rss_mb()),
+        "peak_job_process_rss_mb": max((row["job_process_peak_rss_mb"] or 0 for row in rows), default=0),
         "cpu_count_visible": os.cpu_count(),
         "documents": rows,
         "passed": not failed and bool(rows),

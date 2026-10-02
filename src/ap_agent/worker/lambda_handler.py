@@ -13,7 +13,9 @@ message the handler
   3. claims the job only if it is still `QUEUED` (`OperationsRepository.claim_job`),
      which makes a duplicate delivery, a replayed message or a message for a job
      that already finished a no-op -- never a second execution;
-  4. runs the same executors as the polling worker (`WorkerRunner.execute_claimed`).
+  4. runs the job in a *fresh child process* (`IsolatedJobRunner` -> `ap_agent.worker.run_job`), which uses the same
+     executors as the polling worker (`WorkerRunner.execute_claimed`). A child that is killed (out of memory), crashes
+     or times out is recorded as a failed job by this process.
 
 If a previous invocation died mid-job (Lambda timeout, out-of-memory) the job is
 left `RUNNING`; SQS redelivers the message after the visibility timeout, and the
@@ -21,13 +23,14 @@ redelivery (`ApproximateReceiveCount > 1`) finds the job `RUNNING`. It is then
 finished as `FAILED` / `WORKER_INTERRUPTED` -- explicitly *not* silently
 re-executed (no duplicate processing; a human re-submits).
 
-The executors and the OCR engine are built once per warm container and reused.
-Nothing here reads configuration at import time.
+Nothing here reads configuration at import time, and this process never imports an OCR library.
 """
 
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 from enum import Enum
 from functools import lru_cache
 from typing import Any, Optional
@@ -41,6 +44,7 @@ __all__ = [
     "PoisonMessageError",
     "process_dispatch_record",
     "process_sqs_event",
+    "IsolatedJobRunner",
     "handler",
 ]
 
@@ -132,17 +136,66 @@ def process_sqs_event(event: dict[str, Any], *, runner: Any) -> dict[str, list[d
     return {"batchItemFailures": failures}
 
 
+class IsolatedJobRunner:
+    """Runs each claimed job in a fresh child process (`ap_agent.worker.run_job`).
+
+    Keeps this (Lambda) process tiny -- no OCR library is imported here -- and gives the child the whole memory
+    budget. An out-of-memory kill, a crash or a timeout of the child is recorded on the job by *this* process as a
+    controlled failure (`WORKER_PROCESS_FAILED` / `WORKER_TIMEOUT`), so the job never lingers in `RUNNING`.
+    """
+
+    # Seconds reserved at the end of the invocation to kill the child and record the failure.
+    SAFETY_MARGIN_SECONDS = 45.0
+    MINIMUM_TIMEOUT_SECONDS = 30.0
+
+    def __init__(self, operations: Any, *, command: Optional[list[str]] = None) -> None:
+        self.operations = operations
+        self._command = command or [sys.executable, "-m", "ap_agent.worker.run_job"]
+        self.time_budget_seconds: Optional[float] = None
+
+    def execute_claimed(self, job: WorkflowJob) -> WorkflowJob:
+        budget = self.time_budget_seconds
+        timeout = None if budget is None else max(self.MINIMUM_TIMEOUT_SECONDS, budget - self.SAFETY_MARGIN_SECONDS)
+        failure: Optional[str] = None
+
+        try:
+            completed = subprocess.run(  # noqa: S603 - fixed command, ids are validated UUIDs
+                [*self._command, str(job.job_id), str(job.tenant_id)],
+                timeout=timeout, check=False, stdin=subprocess.DEVNULL,
+            )
+
+            if completed.returncode != 0:
+                failure = "WORKER_PROCESS_FAILED"
+                _LOGGER.error("Job %s: the job process exited with status %s.", job.job_id, completed.returncode)
+        except subprocess.TimeoutExpired:
+            failure = "WORKER_TIMEOUT"
+            _LOGGER.error("Job %s: the job process ran out of time and was stopped.", job.job_id)
+
+        current = self.operations.peek_job(job.job_id)
+
+        if failure is not None and current is not None and current.status is WorkflowJobStatus.RUNNING:
+            try:
+                with self.operations.transaction(job.tenant_id) as cursor:
+                    return self.operations.finish_job(
+                        cursor, job, status=WorkflowJobStatus.FAILED, event_type="JOB_FAILED",
+                        message="The worker process did not finish the job.", error_code=failure,
+                    )
+            except JobStateError:
+                current = self.operations.peek_job(job.job_id)
+
+        return current if current is not None else job
+
+
 @lru_cache(maxsize=1)
-def _runner() -> Any:
-    """Built on first use per warm container (loads the OCR engine once)."""
+def _runner() -> IsolatedJobRunner:
+    """Built on first use per warm container. Reads no OCR library: only the database repository."""
 
-    from ap_agent.aws.paddle_cache import prepare_paddlex_cache
-    from ap_agent.worker.__main__ import build_runner
-    from ap_agent.worker.config import load_worker_config
+    from ap_agent.config.postgres import MemoryConfig
+    from ap_agent.db.connection import load_dsn
+    from ap_agent.repositories.operations_repository import OperationsRepository
 
-    prepare_paddlex_cache()  # before PaddleOCR is imported: models and fonts come from the image, never the network
-    config = load_worker_config()
-    return build_runner(config, warm_up_ocr=True)
+    memory_config = MemoryConfig()
+    return IsolatedJobRunner(OperationsRepository(load_dsn(memory_config), memory_config))
 
 
 def handler(event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
@@ -150,5 +203,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str
 
     from ap_agent.aws.secrets import load_ssm_parameters_into_environment
 
-    load_ssm_parameters_into_environment()
-    return process_sqs_event(event, runner=_runner())
+    load_ssm_parameters_into_environment()  # the child process inherits the loaded environment
+    runner = _runner()
+    remaining = getattr(context, "get_remaining_time_in_millis", None)
+    runner.time_budget_seconds = (remaining() / 1000.0) if callable(remaining) else None
+    return process_sqs_event(event, runner=runner)

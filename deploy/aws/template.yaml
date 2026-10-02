@@ -57,10 +57,13 @@ Parameters:
     Description: Name of the least-privilege runtime database role the migration task grants schema access to (not a secret).
   WorkerMemoryMb:
     Type: Number
-    Default: 4096
-    MinValue: 2048
+    Default: 8192
+    MinValue: 4096
     MaxValue: 10240
-    Description: Worker memory. Lambda CPU scales with memory; raise it if the PaddleOCR benchmark misses the 12-minute target.
+    Description: >-
+      Worker memory (Lambda CPU scales with memory: ~1 vCPU per 1,769 MB). 4096 MB was the starting point; the benchmark
+      measured per-job peak resident sets of 1.1-6.8 GB (the largest on a 15 KB PDF), so the default is 8192 MB
+      (docs/m11e1_aws_go_live_report.md). The Lambda maximum is 10240 MB.
   WorkerEphemeralStorageMb:
     Type: Number
     Default: 3072

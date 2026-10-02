@@ -152,7 +152,7 @@ jobs:
 
   worker-benchmark:
     # The decisive Lambda-viability measurement: real PaddleOCR through the production worker path, inside the Lambda
-    # image, under a CPU/memory ceiling approximating a 4096 MB function (~2.3 vCPU). Must finish in <= 12 minutes.
+    # image, under a CPU/memory ceiling approximating the deployed 8192 MB function (~4.6 vCPU; the runner has 4). Must finish in <= 12 minutes.
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -183,10 +183,10 @@ jobs:
         run: |
           docker run --rm --network host -e PGPASSWORD="${BENCH_DB_PASSWORD}" postgres:16 psql -h 127.0.0.1 -U postgres -d ap_agent_bench \
             -c "CREATE ROLE ap_agent_bench_app LOGIN PASSWORD '${BENCH_DB_PASSWORD}' NOSUPERUSER NOBYPASSRLS;"
-      - name: Benchmark real PaddleOCR (2.3 vCPU, 4096 MB)
+      - name: Benchmark real PaddleOCR (4 vCPU, 8192 MB)
         run: |
           # Read-only root and blocked model/font hosts: any run-time download would fail the benchmark.
-          docker run --rm --network host --cpus 2.3 --memory 4096m --memory-swap 4096m \
+          docker run --rm --network host --cpus 4 --memory 8192m --memory-swap 8192m \
             --read-only --tmpfs /tmp:rw,exec,size=3g \
             --add-host paddle-model-ecology.bj.bcebos.com:127.0.0.1 --add-host huggingface.co:127.0.0.1 \
             --add-host hf-mirror.com:127.0.0.1 --add-host modelscope.cn:127.0.0.1 \
@@ -200,7 +200,7 @@ jobs:
       - name: Publish the result
         if: always()
         run: |
-          test -f "$RUNNER_TEMP/benchmark.json" && { echo '### Worker benchmark (real PaddleOCR, 2.3 vCPU / 4096 MB)'; echo '```json'; cat "$RUNNER_TEMP/benchmark.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          test -f "$RUNNER_TEMP/benchmark.json" && { echo '### Worker benchmark (real PaddleOCR, 4 vCPU / 8192 MB)'; echo '```json'; cat "$RUNNER_TEMP/benchmark.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:

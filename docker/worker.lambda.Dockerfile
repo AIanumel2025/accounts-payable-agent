@@ -9,8 +9,8 @@
 # at run time: a cold start never depends on a model host being reachable. HOME and every cache directory are
 # redirected to /tmp (the only writable path on Lambda). Real PaddleOCR only; no substitution.
 #
-# Memory/CPU: Lambda allocates CPU in proportion to memory. Start at 4096 MB, raise it if the benchmark
-# (docs/m11e1_aws_go_live_report.md) misses the 12-minute target.
+# Memory/CPU: Lambda allocates CPU in proportion to memory (~1 vCPU per 1,769 MB). The benchmark measured per-job
+# peak resident sets of 1.1-6.8 GB, so the deployment default is 8192 MB (~4.6 vCPU); see docs/m11e1_aws_go_live_report.md.
 #
 # Build:  docker build -f docker/worker.lambda.Dockerfile -t ap-agent-worker-lambda .
 
@@ -41,7 +41,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PADDLE_PDX_CACHE_HOME=/tmp/paddlex \
     AP_AGENT_PADDLEX_BAKED_DIR=/opt/paddlex \
     PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
-    OMP_NUM_THREADS=2 \
+    OMP_NUM_THREADS=4 \
     AP_AGENT_ENVIRONMENT=hosted \
     AP_AGENT_ENABLE_WORKER_EXECUTION=true \
     AP_AGENT_WORKER_OCR_PROVIDER=paddleocr \

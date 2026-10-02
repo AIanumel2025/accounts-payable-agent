@@ -3,7 +3,7 @@
 #   deploy.sh pass1   FrontendOrigin empty (creates everything; the API stays closed until pass 2)
 #   deploy.sh pass2   FrontendOrigin = the deployed frontend's origin (Clerk authorized party + S3 CORS)
 # Required environment: CLERK_PUBLISHABLE_KEY (public), CLERK_ISSUER (https://...). Optional: ALARM_EMAIL,
-# WORKER_MEMORY_MB, WEB_API_RESERVED_CONCURRENCY (-1 to leave unreserved), POSTGRES_RUNTIME_ROLE.
+# WORKER_MEMORY_MB (default 8192), WEB_API_RESERVED_CONCURRENCY (-1 to leave unreserved), POSTGRES_RUNTIME_ROLE.
 source "$(dirname "$0")/_common.sh"
 need aws; need sam
 PASS="${1:-}"; [ "$PASS" = pass1 ] || [ "$PASS" = pass2 ] || die "usage: deploy.sh pass1|pass2"
@@ -27,7 +27,7 @@ sam deploy --template-file "$DEPLOY_DIR/template.yaml" --stack-name "$APP_STACK"
     "WebImageUri=$WEB_IMAGE_URI" "ApiImageUri=$API_IMAGE_URI" "WorkerImageUri=$WORKER_IMAGE_URI" "MigrateImageUri=$MIGRATE_IMAGE_URI" \
     "ClerkPublishableKey=$CLERK_PUBLISHABLE_KEY" "ClerkIssuer=$CLERK_ISSUER" "FrontendOrigin=$ORIGIN" \
     "PostgresRuntimeRole=${POSTGRES_RUNTIME_ROLE:-ap_agent_app}" \
-    "WorkerMemoryMb=${WORKER_MEMORY_MB:-4096}" \
+    "WorkerMemoryMb=${WORKER_MEMORY_MB:-8192}" \
     "WebAndApiReservedConcurrency=${WEB_API_RESERVED_CONCURRENCY:-10}" \
     "AlarmEmail=${ALARM_EMAIL:-}"
 

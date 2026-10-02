@@ -113,3 +113,20 @@ def test_orphaned_running_job_is_failed_on_redelivery(runtime_dsn, local_config,
     job = operations.get_job(tenant_id, job_id)
     assert outcome is MessageOutcome.INTERRUPTED_JOB_FAILED and runner.executed == []
     assert job.status is WorkflowJobStatus.FAILED and job.error_code == "WORKER_INTERRUPTED"
+
+
+def test_isolated_runner_records_a_dead_child_on_the_real_job(runtime_dsn, local_config, tenant_id, tmp_path):
+    import sys
+
+    from ap_agent.worker.lambda_handler import IsolatedJobRunner
+
+    sqs = FakeSqs()
+    job_id, _ = _submit(runtime_dsn, local_config, tenant_id, tmp_path, sqs)
+    operations = OperationsRepository(runtime_dsn, local_config)
+    claimed = operations.claim_job(job_id, tenant_id=tenant_id)
+    runner = IsolatedJobRunner(operations, command=[sys.executable, "-c", "import sys; sys.exit(137)"])
+
+    finished = runner.execute_claimed(claimed)
+
+    assert finished.status is WorkflowJobStatus.FAILED and finished.error_code == "WORKER_PROCESS_FAILED"
+    assert [e.event_type for e in operations.list_events(tenant_id, job_id)][-1] == "JOB_FAILED"
