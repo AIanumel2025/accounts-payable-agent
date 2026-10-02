@@ -20,3 +20,7 @@ env/
 # Editors
 .vscode/
 .idea/
+
+# M11E.1 AWS deployment: local working files (image URIs, SAM build output). Never contains a secret.
+deploy/aws/.local/
+.aws-sam/

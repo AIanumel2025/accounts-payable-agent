@@ -65,6 +65,8 @@ jobs:
       github.head_ref == 'claude/sharp-brahmagupta-ec6k5e' ||
       github.head_ref == 'claude/nice-faraday-m46tqu' ||
       github.head_ref == 'claude/amazing-euler-546zxj' ||
+      github.head_ref == 'claude/great-bardeen-w8wwlz' ||
+      github.head_ref == 'claude/m11e1-aws-go-live' ||
       github.head_ref == 'claude/m11e-hosted-mvp'
     runs-on: ubuntu-latest
     # Generous headroom for a cold run: paddlepaddle's wheel alone is

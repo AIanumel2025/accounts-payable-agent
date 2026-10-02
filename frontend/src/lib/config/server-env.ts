@@ -32,6 +32,8 @@ export type FrontendAuthMode = "development_headers" | "clerk_jwt";
 export interface ServerEnvConfig {
   apiBaseUrl: string;
   authMode: FrontendAuthMode;
+  /** M11E.1: `aws_sigv4` when FastAPI sits behind an IAM-protected Lambda Function URL. Absent = `bearer`. */
+  platformAuthMode?: "bearer" | "aws_sigv4";
   /** Present only in `development_headers` mode. */
   devTenantId?: string;
   devActorId?: string;
@@ -68,6 +70,17 @@ function assertValidAuthMode(name: string, value: string): FrontendAuthMode {
     throw new ServerConfigError("INVALID_VALUE", name, `${name} must be "development_headers" or "clerk_jwt".`);
   }
   return value;
+}
+
+function assertValidPlatformAuthMode(source: EnvSource): "bearer" | "aws_sigv4" {
+  const raw = (source.AP_AGENT_FRONTEND_PLATFORM_AUTH_MODE ?? "").trim().toLowerCase();
+  if (raw === "" || raw === "bearer") return "bearer";
+  if (raw === "aws_sigv4") return "aws_sigv4";
+  throw new ServerConfigError(
+    "INVALID_VALUE",
+    "AP_AGENT_FRONTEND_PLATFORM_AUTH_MODE",
+    'AP_AGENT_FRONTEND_PLATFORM_AUTH_MODE must be "bearer" or "aws_sigv4".',
+  );
 }
 
 const CLERK_PUBLISHABLE_KEY_PATTERN = /^pk_(test|live)_[A-Za-z0-9+/=_-]{8,}$/;
@@ -128,9 +141,19 @@ export function loadServerEnvConfig(source: EnvSource = process.env): ServerEnvC
     requireVariable(source, "AP_AGENT_FRONTEND_AUTH_MODE"),
   );
 
+  const platformAuthMode = assertValidPlatformAuthMode(source);
+
+  if (platformAuthMode === "aws_sigv4" && (authMode !== "clerk_jwt" || !isHostedEnvironment(source))) {
+    throw new ServerConfigError(
+      "INVALID_VALUE",
+      "AP_AGENT_FRONTEND_PLATFORM_AUTH_MODE",
+      'AP_AGENT_FRONTEND_PLATFORM_AUTH_MODE "aws_sigv4" requires a hosted environment with "clerk_jwt".',
+    );
+  }
+
   if (authMode === "clerk_jwt") {
     assertClerkConfiguration(source);
-    return { apiBaseUrl, authMode };
+    return { apiBaseUrl, authMode, ...(platformAuthMode === "aws_sigv4" ? { platformAuthMode } : {}) };
   }
 
   if (isHostedEnvironment(source)) {

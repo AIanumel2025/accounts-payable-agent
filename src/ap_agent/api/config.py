@@ -21,16 +21,24 @@ from uuid import UUID
 
 from ap_agent.config.deployment import (
     AuthMode,
+    AwsS3Config,
     ClerkConfig,
     DeploymentEnvironment,
     HostedConfigurationError,
+    PlatformAuthMode,
+    QueueBackend,
     S3StorageConfig,
+    SqsDispatchConfig,
     StorageMode,
     hosted_configuration_problems,
     load_auth_mode,
+    load_aws_s3_config,
     load_clerk_config,
     load_deployment_environment,
+    load_platform_auth_mode,
+    load_queue_backend,
     load_s3_config,
+    load_sqs_config,
     load_storage_mode,
 )
 from ap_agent.models.operations import UploadLimits
@@ -104,6 +112,14 @@ class ApiConfig:
     storage_mode: StorageMode = StorageMode.LOCAL
     s3: Optional[S3StorageConfig] = None
 
+    # M11E.1 (AWS): native S3 via the execution role, how the platform
+    # authenticates the caller before Clerk, and where accepted jobs are
+    # dispatched. Defaults reproduce the Render/R2 behaviour exactly.
+    aws_s3: Optional[AwsS3Config] = None
+    platform_auth_mode: PlatformAuthMode = PlatformAuthMode.BEARER
+    queue_backend: QueueBackend = QueueBackend.NONE
+    sqs: Optional[SqsDispatchConfig] = None
+
     def __post_init__(self) -> None:
         assert self.api_version.strip()
         assert self.api_prefix.startswith("/")
@@ -123,6 +139,10 @@ class ApiConfig:
             artifact_root_configured=self.artifact_root is not None,
             operations_enabled=self.enable_operations,
             requires_storage=True,
+            aws_s3=self.aws_s3,
+            platform_auth_mode=self.platform_auth_mode,
+            queue_backend=self.queue_backend,
+            sqs=self.sqs,
         )
 
         if problems:
@@ -157,6 +177,10 @@ def load_api_config() -> ApiConfig:
         clerk=load_clerk_config(),
         storage_mode=storage_mode,
         s3=load_s3_config(),
+        aws_s3=load_aws_s3_config() if storage_mode is StorageMode.AWS_S3 else None,
+        platform_auth_mode=load_platform_auth_mode(),
+        queue_backend=load_queue_backend(),
+        sqs=load_sqs_config(),
         enable_operations=enable_operations,
         artifact_root=Path(artifact_root_text) if artifact_root_text else None,
         enable_review_command_writes=enable_writes,

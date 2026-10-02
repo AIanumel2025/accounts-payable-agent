@@ -1,0 +1,209 @@
+name: M11E.1 AWS deployment artefacts
+
+# Verifies the AWS go-live artefacts without needing an AWS account: template linting and policy checks, the four
+# Lambda container images (built, smoke-tested, size-checked against Lambda's 10 GB limit) and the representative
+# real-PaddleOCR worker benchmark. It does NOT re-run the full backend, browser or hosted-acceptance suites: those
+# run once each in `m8-postgres-acceptance.yml` and `m11a-frontend.yml`.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "deploy/aws/**"
+      - "docker/*.lambda.Dockerfile"
+      - "scripts/verify_aws_templates.py"
+      - "scripts/benchmark_worker.py"
+      - "frontend/lambda/**"
+      - "frontend/src/lib/server/**"
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/m11e1-aws.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m11e1-aws-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  templates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "PyYAML>=6,<7" cfn-lint aws-sam-cli
+      - name: cfn-lint
+        run: cfn-lint -- deploy/aws/template.yaml deploy/aws/ecr.yaml deploy/aws/fargate-fallback.yaml
+      - name: sam validate (no AWS access; throwaway placeholder credentials are never used to call AWS)
+        env:
+          SAM_CLI_TELEMETRY: "0"
+          AWS_ACCESS_KEY_ID: placeholder
+          AWS_SECRET_ACCESS_KEY: placeholder
+        run: sam validate --lint -t deploy/aws/template.yaml --region eu-west-2
+      - name: Cost, exposure, secret and least-privilege rules
+        run: python scripts/verify_aws_templates.py
+      - name: No account id, DSN or secret in deploy/aws
+        run: |
+          # (a 12-digit account id standing alone; UUID-shaped placeholders and the script's own key-prefix checks are fine)
+          ! grep -rEn "(^|[^0-9A-Za-z-])[0-9]{12}([^0-9A-Za-z-]|$)|postgres(ql)?://|sk_(live|test)_[A-Za-z0-9]{8,}|-----BEGIN|AKIA[0-9A-Z]{8,}" deploy/aws --include='*.yaml' --include='*.sh'
+      - name: Shell scripts parse
+        run: for f in deploy/aws/scripts/*.sh; do bash -n "$f"; done
+
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, web, worker, migrate]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the ${{ matrix.image }} Lambda image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.image }}.lambda.Dockerfile
+          load: true
+          push: false
+          tags: ap-agent-${{ matrix.image }}-lambda:ci
+          # A well-formed but fake publishable key: public by design, inlined into the bundle.
+          build-args: |
+            ${{ matrix.image == 'web' && 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_Y2xlcmsuYWNjb3VudHMuZXhhbXBsZS50ZXN0JA==' || '' }}
+          cache-from: type=gha,scope=lambda-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=lambda-${{ matrix.image }}
+
+      - name: Uncompressed size is within Lambda's 10 GB container-image limit
+        run: |
+          size="$(docker image inspect -f '{{.Size}}' ap-agent-${{ matrix.image }}-lambda:ci)"
+          echo "uncompressed size: $((size / 1024 / 1024)) MiB"
+          echo "### ${{ matrix.image }} image: $((size / 1024 / 1024)) MiB uncompressed" >> "$GITHUB_STEP_SUMMARY"
+          test "$size" -lt $((10 * 1024 * 1024 * 1024))
+
+      - name: Scan the image's application files for secrets
+        run: |
+          docker run --rm -v "$PWD/scripts/scan_secrets.sh:/scan_secrets.sh:ro" --entrypoint sh \
+            ap-agent-${{ matrix.image }}-lambda:ci /scan_secrets.sh /app /opt/ap-agent
+
+      - name: API - starts, answers liveness, refuses an unsafe hosted configuration, IAM mode needs Clerk
+        if: matrix.image == 'api'
+        run: |
+          docker run --rm --entrypoint ls ap-agent-api-lambda:ci /opt/extensions/lambda-adapter
+          if docker run --rm -e AP_AGENT_ENVIRONMENT=hosted -e AP_AGENT_PLATFORM_AUTH_MODE=aws_sigv4 -e AP_AGENT_POSTGRES_DSN=postgresql://u:p@db.invalid/d ap-agent-api-lambda:ci; then
+            echo "::error::the API started in hosted mode without Clerk configuration"; exit 1
+          fi
+          docker run -d --name api -p 8000:8000 -e AP_AGENT_API_DISABLE_CONNECTION_POOL=true -e AP_AGENT_POSTGRES_DSN=postgresql://u:p@db.invalid/d ap-agent-api-lambda:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/health/live && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8000/health/live
+          docker logs api 2>&1 | grep -E "db\.invalid|u:p@" && exit 1 || true
+          docker rm -f api
+
+      - name: Web - standalone server starts, redirects anonymous users, refuses forged headers, has no secret in the bundle
+        if: matrix.image == 'web'
+        run: |
+          docker run --rm --entrypoint ls ap-agent-web-lambda:ci /opt/extensions/lambda-adapter
+          docker run -d --name web -p 3000:3000 \
+            -e AP_AGENT_ENVIRONMENT=hosted -e AP_AGENT_FRONTEND_AUTH_MODE=clerk_jwt -e AP_AGENT_FRONTEND_PLATFORM_AUTH_MODE=aws_sigv4 \
+            -e AP_AGENT_FRONTEND_UPLOAD_MODE=s3_direct -e AP_AGENT_FRONTEND_OPERATIONS_MODE=enabled \
+            -e AP_AGENT_API_BASE_URL=https://abcdefghijklmnopqrstuvwx.lambda-url.eu-west-2.on.aws \
+            -e NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_Y2xlcmsuYWNjb3VudHMuZXhhbXBsZS50ZXN0JA== \
+            -e CLERK_SECRET_KEY="sk_live_$(printf 'a%.0s' {1..24})" -e AP_AGENT_FRONTEND_CSRF_SECRET="$(printf 'c%.0s' {1..40})" \
+            -e AP_AGENT_CLERK_AUTHORIZED_PARTIES=https://app.example.test ap-agent-web-lambda:ci
+          for i in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/icon.svg && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/icon.svg)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/dashboard)" = 307
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/v1/operations/upload-intents -H 'x-ap-agent-clerk-authorization: Bearer forged')" = 401
+          docker rm -f web
+          ! docker run --rm --entrypoint sh ap-agent-web-lambda:ci -c 'grep -rIlE "AP_AGENT_POSTGRES|AP_AGENT_S3_|AP_AGENT_SSM_PARAMETERS|lambda-url\.|x-ap-agent-clerk-authorization" /app/.next/static'
+
+      - name: "Worker - read-only root and no network: baked models and fonts serve a real OCR prediction"
+        if: matrix.image == 'worker'
+        run: |
+          # Emulates Lambda: read-only root filesystem, writable /tmp only, and no network at all.
+          docker run --rm --read-only --tmpfs /tmp:rw,exec,size=2g --network none \
+            -v "$PWD/tests/fixtures/invoices:/fixtures:ro" --entrypoint python ap-agent-worker-lambda:ci -c "
+          import awslambdaric, ap_agent.worker.lambda_handler as h
+          from ap_agent.aws.paddle_cache import prepare_paddlex_cache
+          from ap_agent.adapters.paddleocr_adapter import create_engine
+          from ap_agent.config.settings import PaddleEngineOptions
+          print('cache:', prepare_paddlex_cache())
+          engine = create_engine(PaddleEngineOptions())
+          result = list(engine.predict('/fixtures/08181_flat_document.png'))
+          from paddlex.utils.fonts import PINGFANG_FONT, SIMFANG_FONT
+          print('fonts:', PINGFANG_FONT.path, SIMFANG_FONT.path)
+          assert result, 'no OCR result'
+          print('real PaddleOCR prediction served offline from the image')"
+          if docker run --rm --entrypoint python -e AP_AGENT_ARTIFACT_STORAGE=local -e AP_AGENT_ARTIFACT_ROOT=/tmp/x ap-agent-worker-lambda:ci -m ap_agent.worker --once; then
+            echo "::error::the worker started in hosted mode with local storage"; exit 1
+          fi
+
+      - name: Migration task - handler imports and rejects unknown actions without any database
+        if: matrix.image == 'migrate'
+        run: |
+          docker run --rm --entrypoint python ap-agent-migrate-lambda:ci -c "
+          from ap_agent.aws.migration_handler import handler
+          assert handler({'action': 'nope'}, None)['error'] == 'ACTION_NOT_SUPPORTED'
+          assert handler({'action': 'migrate'}, None)['ok'] is False
+          print('ok')"
+
+  worker-benchmark:
+    # The decisive Lambda-viability measurement: real PaddleOCR through the production worker path, inside the Lambda
+    # image, under a CPU/memory ceiling approximating the deployed 8192 MB function (~4.6 vCPU; the runner has 4). Must finish in <= 12 minutes.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # Throwaway password of a disposable CI database that exists only for this job.
+      BENCH_DB_PASSWORD: ci-only-disposable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the worker Lambda image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/worker.lambda.Dockerfile
+          load: true
+          push: false
+          tags: ap-agent-worker-lambda:bench
+          cache-from: type=gha,scope=lambda-worker
+      - name: Start a disposable PostgreSQL with TLS (the application requires SSL and channel binding)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pgcert" && cd "$RUNNER_TEMP/pgcert"
+          openssl req -new -x509 -days 1 -nodes -subj /CN=localhost -out server.crt -keyout server.key
+          sudo chown 999:999 server.crt server.key && sudo chmod 600 server.key
+          docker run -d --name bench-pg --network host -e POSTGRES_PASSWORD="${BENCH_DB_PASSWORD}" -e POSTGRES_DB=ap_agent_bench \
+            -e POSTGRES_HOST_AUTH_METHOD=scram-sha-256 -e POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256" \
+            -v "$RUNNER_TEMP/pgcert:/certs:ro" postgres:16 -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+          for i in $(seq 1 30); do docker exec bench-pg pg_isready -U postgres -d ap_agent_bench && break; sleep 1; done
+          sleep 3
+          docker exec -e PGPASSWORD="${BENCH_DB_PASSWORD}" bench-pg psql -h 127.0.0.1 -U postgres -d ap_agent_bench \
+            -c "CREATE ROLE ap_agent_bench_app LOGIN PASSWORD '${BENCH_DB_PASSWORD}' NOSUPERUSER NOBYPASSRLS;"
+      - name: Benchmark real PaddleOCR (4 vCPU, 8192 MB)
+        run: |
+          # Read-only root and blocked model/font hosts: any run-time download would fail the benchmark.
+          docker run --rm --network host --cpus 4 --memory 8192m --memory-swap 8192m \
+            --read-only --tmpfs /tmp:rw,exec,size=3g \
+            --add-host paddle-model-ecology.bj.bcebos.com:127.0.0.1 --add-host huggingface.co:127.0.0.1 \
+            --add-host hf-mirror.com:127.0.0.1 --add-host modelscope.cn:127.0.0.1 \
+            -e AP_AGENT_POSTGRES_MIGRATION_DSN="postgresql://postgres:${BENCH_DB_PASSWORD}@127.0.0.1:5432/ap_agent_bench?sslmode=require&channel_binding=require" \
+            -e AP_AGENT_POSTGRES_DSN="postgresql://ap_agent_bench_app:${BENCH_DB_PASSWORD}@127.0.0.1:5432/ap_agent_bench?sslmode=require&channel_binding=require" \
+            -e AP_AGENT_POSTGRES_RUNTIME_ROLE=ap_agent_bench_app \
+            -e AP_AGENT_ENVIRONMENT=test \
+            -v "$PWD/tests/fixtures/invoices:/fixtures:ro" -v "$PWD/scripts/benchmark_worker.py:/app/scripts/benchmark_worker.py:ro" \
+            -v "$RUNNER_TEMP:/out" \
+            --entrypoint python ap-agent-worker-lambda:bench scripts/benchmark_worker.py --fixtures-dir /fixtures --output /out/benchmark.json
+      - name: Publish the result
+        if: always()
+        run: |
+          test -f "$RUNNER_TEMP/benchmark.json" && { echo '### Worker benchmark (real PaddleOCR, 4 vCPU / 8192 MB)'; echo '```json'; cat "$RUNNER_TEMP/benchmark.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-benchmark
+          path: ${{ runner.temp }}/benchmark.json
+          if-no-files-found: ignore

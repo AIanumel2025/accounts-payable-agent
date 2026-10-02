@@ -32,6 +32,8 @@ from ap_agent.api.schemas import (
     JobResponse,
     PaginationMeta,
     SubmissionResponse,
+    UploadIntentRequest,
+    UploadIntentResponse,
 )
 from ap_agent.artifacts.storage import ArtifactStore
 from ap_agent.artifacts.upload_validation import reject_forbidden_form_fields
@@ -39,6 +41,7 @@ from ap_agent.exceptions import OperationsRequestRejectedError
 from ap_agent.models.interface import interface_utc_now
 from ap_agent.models.operations import JobSubmissionOutcome
 from ap_agent.repositories.operations_repository import OperationsRepository
+from ap_agent.services.job_dispatch import JobDispatcher, dispatch_if_queued
 from ap_agent.services.operations_submission import require_read_permission, submit_upload
 
 router = APIRouter(tags=["operations"])
@@ -70,6 +73,21 @@ def get_artifact_store(request: Request) -> ArtifactStore:
         raise OperationsRequestRejectedError("OPERATIONS_DISABLED", http_status=403)
 
     return store
+
+
+def get_job_dispatcher(request: Request) -> JobDispatcher:
+    return request.app.state.job_dispatcher
+
+
+def get_upload_staging(request: Request):
+    """Direct-to-S3 staging exists only for native Amazon S3 storage."""
+
+    staging = getattr(request.app.state, "upload_staging", None)
+
+    if staging is None:
+        raise OperationsRequestRejectedError("DIRECT_UPLOAD_UNAVAILABLE", http_status=404)
+
+    return staging
 
 
 def require_operations_enabled(api_config: ApiConfig = Depends(get_api_config)) -> None:
@@ -114,6 +132,7 @@ async def submit_invoice(
     api_config: ApiConfig = Depends(get_api_config),
     repository: OperationsRepository = Depends(get_operations_repository),
     store: ArtifactStore = Depends(get_artifact_store),
+    dispatcher: JobDispatcher = Depends(get_job_dispatcher),
 ) -> ApiEnvelope[SubmissionResponse]:
     from ap_agent.services.operations_submission import require_submit_permission
 
@@ -143,6 +162,82 @@ async def submit_invoice(
         )
     finally:
         await form.close()
+
+    # The job is committed; only now is a worker woken for it. The request
+    # never waits for OCR. (No-op unless an external queue is configured.)
+    await run_in_threadpool(dispatch_if_queued, dispatcher, result.job)
+
+    replay = result.outcome == JobSubmissionOutcome.IDEMPOTENT_REPLAY
+
+    if replay:
+        response.status_code = 200
+
+    return _envelope(
+        "IDEMPOTENT" if replay else "ACCEPTED",
+        SubmissionResponse(job=JobResponse.from_domain(result.job), idempotent_replay=replay).model_dump(mode="json"),
+    )
+
+
+@router.post(
+    "/api/v1/operations/upload-intents",
+    status_code=201,
+    response_model=ApiEnvelope[UploadIntentResponse],
+    responses=_ERROR_RESPONSES,
+    dependencies=[Depends(require_operations_enabled)],
+)
+def create_upload_intent(
+    actor: AuthenticatedActor,
+    body: UploadIntentRequest,
+    api_config: ApiConfig = Depends(get_api_config),
+    staging=Depends(get_upload_staging),
+) -> ApiEnvelope[UploadIntentResponse]:
+    """Step 1 of a staged direct upload: validate the declared file and return
+    a presigned POST. Nothing is stored or enqueued yet."""
+
+    from ap_agent.services.direct_upload import issue_upload_intent
+
+    intent = issue_upload_intent(
+        staging=staging, limits=api_config.upload_limits, actor=actor, filename=body.filename,
+        declared_media_type=body.media_type, byte_size=body.byte_size, sha256=body.sha256,
+    )
+
+    return _envelope(
+        "CREATED",
+        UploadIntentResponse(
+            intent_id=intent.intent_id, upload_url=intent.url, upload_fields=intent.fields,
+            upload_expires_at=intent.upload_expires_at, finalize_expires_at=intent.finalize_expires_at,
+            maximum_bytes=api_config.upload_limits.maximum_file_bytes,
+        ).model_dump(mode="json"),
+    )
+
+
+@router.post(
+    "/api/v1/operations/upload-intents/{intent_id}/finalize",
+    status_code=202,
+    response_model=ApiEnvelope[SubmissionResponse],
+    responses=_ERROR_RESPONSES,
+    dependencies=[Depends(require_operations_enabled)],
+)
+def finalize_upload_intent(
+    response: Response,
+    actor: AuthenticatedActor,
+    intent_id: UUID = Path(description="Upload intent identifier"),
+    api_config: ApiConfig = Depends(get_api_config),
+    repository: OperationsRepository = Depends(get_operations_repository),
+    store: ArtifactStore = Depends(get_artifact_store),
+    staging=Depends(get_upload_staging),
+    dispatcher: JobDispatcher = Depends(get_job_dispatcher),
+) -> ApiEnvelope[SubmissionResponse]:
+    """Step 3 of a staged direct upload: validate the stored object, create the
+    job and enqueue it. Idempotent per intent. Never runs OCR."""
+
+    from ap_agent.services.direct_upload import finalize_upload
+
+    result = finalize_upload(
+        repository=repository, store=store, staging=staging, limits=api_config.upload_limits,
+        actor=actor, intent_id=intent_id,
+    )
+    dispatch_if_queued(dispatcher, result.job)
 
     replay = result.outcome == JobSubmissionOutcome.IDEMPOTENT_REPLAY
 

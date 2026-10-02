@@ -29,7 +29,7 @@ from uuid import UUID
 from fastapi import Depends, Header, Request
 
 from ap_agent.api.config import ApiConfig
-from ap_agent.config.deployment import AuthMode
+from ap_agent.config.deployment import AuthMode, PlatformAuthMode
 from ap_agent.exceptions import ReviewAuthenticationError, TenantAccessDeniedError
 from ap_agent.models.interface import InterfaceActor, InterfaceConfig, InterfaceRole, interface_utc_now
 from ap_agent.repositories.review_repository import ReviewRepository
@@ -37,6 +37,7 @@ from ap_agent.repositories.review_repository import ReviewRepository
 __all__ = [
     "AUTHENTICATION_MAX_AGE",
     "AUTHENTICATED_AT_SKEW_ALLOWANCE",
+    "CLERK_AUTHORIZATION_HEADER",
     "parse_bearer_token",
     "parse_authenticated_at",
     "authenticated_interface_actor",
@@ -63,6 +64,15 @@ AUTHENTICATION_MAX_AGE = timedelta(hours=12)
 AUTHENTICATED_AT_SKEW_ALLOWANCE = timedelta(seconds=30)
 
 
+# M11E.1: on the IAM-protected Lambda Function URL, SigV4 occupies the
+# standard `Authorization` header, so the Next.js server presents the Clerk
+# session token in this dedicated header instead. It is read ONLY when
+# `AP_AGENT_PLATFORM_AUTH_MODE=aws_sigv4`; in every other mode it is ignored,
+# and in `aws_sigv4` mode `Authorization` (the SigV4 signature) is never
+# parsed as a Clerk token. The token is still verified independently below.
+CLERK_AUTHORIZATION_HEADER = "X-AP-Agent-Clerk-Authorization"
+
+
 def parse_bearer_token(authorization: str | None) -> str:
     if authorization is None or not authorization.strip():
         raise ReviewAuthenticationError(
@@ -79,7 +89,9 @@ def parse_bearer_token(authorization: str | None) -> str:
     return parts[1]
 
 
-def _clerk_interface_actor(request: Request, authorization: str | None) -> InterfaceActor:
+def _clerk_interface_actor(
+    request: Request, authorization: str | None, clerk_authorization: str | None = None
+) -> InterfaceActor:
     """Clerk mode: verify the bearer token independently, then resolve the
     verified organization and user through the database identity mapping.
     Prototype headers are never read on this path. Nothing here logs the
@@ -88,7 +100,10 @@ def _clerk_interface_actor(request: Request, authorization: str | None) -> Inter
     from ap_agent.auth.clerk import ClerkTokenError
     from ap_agent.auth.identity import PROVIDER_CLERK
 
-    token = parse_bearer_token(authorization)
+    if request.app.state.api_config.platform_auth_mode is PlatformAuthMode.AWS_SIGV4:
+        token = parse_bearer_token(clerk_authorization)
+    else:
+        token = parse_bearer_token(authorization)
 
     try:
         session = request.app.state.clerk_verifier.verify(token)
@@ -165,9 +180,10 @@ def authenticated_interface_actor(
     x_actor_role: Annotated[str | None, Header(alias="X-Actor-Role")] = None,
     x_authenticated_at: Annotated[str | None, Header(alias="X-Authenticated-At")] = None,
     authorization: Annotated[str | None, Header()] = None,
+    clerk_authorization: Annotated[str | None, Header(alias=CLERK_AUTHORIZATION_HEADER)] = None,
 ) -> InterfaceActor:
     if request.app.state.api_config.auth_mode is AuthMode.CLERK_JWT:
-        return _clerk_interface_actor(request, authorization)
+        return _clerk_interface_actor(request, authorization, clerk_authorization)
 
     # Headers are declared Optional (rather than FastAPI's usual required
     # `Header(...)`) so a *missing* header fails through this function's

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent, FormEvent } from "react";
 import { JobList } from "@/components/operations/JobList";
-import { fetchJobList, submitInvoice } from "@/lib/operations/client";
+import { fetchJobList, submitInvoice, submitInvoiceDirect } from "@/lib/operations/client";
 import {
   formatFileSize,
   isTerminalJob,
@@ -19,6 +19,8 @@ import styles from "./Operations.module.css";
 export interface OperationsConsoleProps {
   initialJobs: JobPayload[];
   csrfToken: string;
+  /** How the file reaches storage; `s3_direct` is the AWS staged upload. Defaults to the multipart flow. */
+  uploadMode?: "multipart" | "s3_direct";
   /** Test/demo hook only: shortens the polling interval. */
   pollIntervalMs?: number;
 }
@@ -40,7 +42,7 @@ function newOperationId(): string {
  * stops once no job is active; a live region announces submission results
  * and terminal transitions only (never every refresh).
  */
-export function OperationsConsole({ initialJobs, csrfToken, pollIntervalMs }: OperationsConsoleProps) {
+export function OperationsConsole({ initialJobs, csrfToken, uploadMode = "multipart", pollIntervalMs }: OperationsConsoleProps) {
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const operationIdRef = useRef<string>(newOperationId());
@@ -126,7 +128,10 @@ export function OperationsConsole({ initialJobs, csrfToken, pollIntervalMs }: Op
     }
 
     setSubmission({ phase: "submitting" });
-    const result = await submitInvoice(file, csrfToken, operationIdRef.current);
+    const result =
+      uploadMode === "s3_direct"
+        ? await submitInvoiceDirect(file, csrfToken)
+        : await submitInvoice(file, csrfToken, operationIdRef.current);
 
     if (!result.ok) {
       setSubmission({ phase: "error", messages: uploadErrorMessages(result.errors) });

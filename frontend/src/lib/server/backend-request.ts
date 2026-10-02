@@ -1,6 +1,7 @@
 import "server-only";
 import { authFailureCode, getBackendAuthHeaders } from "@/lib/auth/backend-auth";
 import type { ServerEnvConfig } from "@/lib/config/server-env";
+import { upstreamFetch } from "@/lib/server/upstream";
 
 /**
  * Server-only FastAPI request boundary (M11A task §5/§10).
@@ -116,7 +117,7 @@ export async function callBackend<T>(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await upstreamFetch(url, {
       method: "GET",
       headers,
       signal: controller.signal,

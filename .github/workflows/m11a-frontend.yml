@@ -48,6 +48,11 @@ on:
       - "src/ap_agent/config/**"
       - "scripts/manage_identity_mappings.py"
       - "tests/unit/test_m11e_*.py"
+      # M11E.1: AWS (IAM platform auth, staged S3 uploads, SQS dispatch, templates).
+      - "tests/unit/test_m11e1_*.py"
+      - "src/ap_agent/aws/**"
+      - "deploy/aws/**"
+      - "scripts/verify_aws_templates.py"
       - "tests/integration/test_m11e_*.py"
       - "pyproject.toml"
       - ".github/workflows/m11a-frontend.yml"
@@ -141,6 +146,12 @@ jobs:
         run: >
           python -m pytest -v -m "not requires_postgres"
           tests/unit/test_m11e_*.py tests/integration/test_m11e_s3_boto3_mock.py
+
+      # M11E.1: the AWS_IAM platform-auth header, staged direct-to-S3 uploads, SQS dispatch/idempotency,
+      # SSM secret loading and the infrastructure-policy checks. No database, no OCR, no AWS.
+      - name: M11E.1 AWS platform auth, staged upload, queue worker and template tests (no database)
+        working-directory: .
+        run: python -m pytest -v -m "not requires_postgres" tests/unit/test_m11e1_*.py
 
       - name: Unit and component tests
         run: npm run test

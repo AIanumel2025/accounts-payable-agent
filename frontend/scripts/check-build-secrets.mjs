@@ -47,6 +47,14 @@ const FORBIDDEN_PATTERNS = [
   { name: "S3-compatible account endpoint", pattern: /[0-9a-f]{32}\.r2\.cloudflarestorage\.com/ },
   { name: "AP_AGENT_S3_* / AP_AGENT_CLERK_* / AP_AGENT_API_* variable name", pattern: /AP_AGENT_(?:S3_|CLERK_|API_)/ },
   { name: "object-store reference", pattern: /object:\/\/[0-9a-f]{32}/ },
+  // M11E.1 (AWS): platform wiring is server-only and must never reach a browser bundle.
+  { name: "AP_AGENT_FRONTEND_PLATFORM_AUTH_MODE / UPLOAD_MODE variable name", pattern: /AP_AGENT_FRONTEND_(?:PLATFORM_AUTH_MODE|UPLOAD_MODE)/ },
+  { name: "server-to-server Clerk header name", pattern: /x-ap-agent-clerk-authorization/i },
+  { name: "AP_AGENT_SSM_PARAMETERS variable name", pattern: /AP_AGENT_SSM_PARAMETERS/ },
+  { name: "AWS secret credential variable name", pattern: /AWS_(?:SECRET_ACCESS_KEY|SESSION_TOKEN)/ },
+  { name: "temporary access key id", pattern: /ASIA[0-9A-Z]{12,}/ },
+  { name: "private Lambda Function URL", pattern: /[a-z0-9]{20,}\.lambda-url\.[a-z0-9-]+\.on\.aws/ },
+  { name: "SQS queue URL", pattern: /sqs\.[a-z0-9-]+\.amazonaws\.com\/\d{12}\// },
   { name: "development actor id (M11C acceptance/demo)", pattern: /real-reviewer-[ab]|demo-reviewer/ },
 ];
 

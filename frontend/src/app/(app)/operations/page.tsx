@@ -5,7 +5,7 @@ import { ErrorState } from "@/components/feedback/ErrorState";
 import { OperationsConsole } from "@/components/operations/OperationsConsole";
 import { getBackendHealth } from "@/lib/api/dashboard";
 import { listJobs } from "@/lib/api/operations";
-import { loadOperationsMode, operationsModesAgree } from "@/lib/config/operations-mode";
+import { loadOperationsMode, loadUploadMode, operationsModesAgree } from "@/lib/config/operations-mode";
 import { requirePageIdentity } from "@/lib/auth/identity";
 import { issueCsrfToken } from "@/lib/server/csrf";
 import { UPLOAD_CSRF_SCOPE } from "@/lib/server/upload-boundary";
@@ -63,7 +63,7 @@ export default async function OperationsPage() {
   } else if (jobsResult === null || !jobsResult.ok) {
     body = <ErrorState kind={jobsResult === null ? "UNKNOWN" : jobsResult.kind} />;
   } else {
-    body = <OperationsConsole initialJobs={jobsResult.data.items} csrfToken={issueCsrfToken(UPLOAD_CSRF_SCOPE)} />;
+    body = <OperationsConsole initialJobs={jobsResult.data.items} csrfToken={issueCsrfToken(UPLOAD_CSRF_SCOPE)} uploadMode={loadUploadMode()} />;
   }
 
   return (

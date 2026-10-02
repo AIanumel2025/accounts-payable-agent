@@ -48,6 +48,76 @@ export async function submitInvoice(file: File, csrfToken: string, operationId: 
   return { ok: false, errors: codes.length > 0 ? codes : ["INTERNAL_ERROR"], status: response.status };
 }
 
+export interface UploadIntentPayload {
+  intent_id: string;
+  upload_url: string;
+  upload_fields: Record<string, string>;
+  maximum_bytes: number;
+}
+
+async function sha256Hex(file: File): Promise<string | null> {
+  if (typeof crypto === "undefined" || !crypto.subtle) return null;
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function postJson(url: string, csrfToken: string, body?: unknown): Promise<{ status: number | null; body: unknown }> {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "x-csrf-token": csrfToken, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store",
+    });
+    return { status: response.status, body: await readJson(response) };
+  } catch {
+    return { status: null, body: null };
+  }
+}
+
+/**
+ * Staged direct upload (AWS mode): 1) ask this application for an upload intent (a short-lived presigned
+ * POST), 2) send the file straight to S3 -- it never passes through the application server -- 3) ask this
+ * application to finalize, which re-validates the stored object and queues the job.
+ */
+export async function submitInvoiceDirect(file: File, csrfToken: string): Promise<ClientResult<SubmissionPayload>> {
+  const sha256 = await sha256Hex(file);
+  if (sha256 === null) return { ok: false, errors: ["HASHING_UNSUPPORTED"], status: null };
+
+  const mediaType = file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : file.name.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
+  const intent = await postJson("/api/v1/operations/upload-intents", csrfToken, {
+    filename: file.name,
+    media_type: mediaType,
+    byte_size: file.size,
+    sha256,
+  });
+  const intentData = typeof intent.body === "object" && intent.body !== null ? (intent.body as { data?: UploadIntentPayload }).data : undefined;
+  if (intent.status !== 201 || !intentData || typeof intentData.upload_url !== "string") {
+    const codes = errorCodes(intent.body);
+    return { ok: false, errors: codes.length > 0 ? codes : ["INTERNAL_ERROR"], status: intent.status };
+  }
+
+  // The policy fixes every field; the file part must come last.
+  const form = new FormData();
+  for (const [name, value] of Object.entries(intentData.upload_fields)) form.set(name, value);
+  form.set("file", file, file.name);
+  try {
+    const stored = await fetch(intentData.upload_url, { method: "POST", body: form });
+    if (!stored.ok) return { ok: false, errors: ["STORAGE_UPLOAD_FAILED"], status: stored.status };
+  } catch {
+    return { ok: false, errors: ["STORAGE_UPLOAD_FAILED"], status: null };
+  }
+
+  const finalized = await postJson(`/api/v1/operations/upload-intents/${intentData.intent_id}/finalize`, csrfToken);
+  if ((finalized.status === 200 || finalized.status === 202) && typeof finalized.body === "object" && finalized.body !== null) {
+    const data = (finalized.body as { data?: SubmissionPayload }).data;
+    if (data && typeof data.job?.job_id === "string") return { ok: true, data, status: finalized.status };
+    return { ok: false, errors: ["MALFORMED_RESPONSE"], status: finalized.status };
+  }
+  const codes = errorCodes(finalized.body);
+  return { ok: false, errors: codes.length > 0 ? codes : ["INTERNAL_ERROR"], status: finalized.status };
+}
+
 export async function fetchJobList(options: { reviewCaseId?: string; pageSize?: number } = {}): Promise<ClientResult<JobListPayload>> {
   const params = new URLSearchParams({ page: "1", page_size: String(options.pageSize ?? 25) });
   if (options.reviewCaseId) params.set("review_case_id", options.reviewCaseId);

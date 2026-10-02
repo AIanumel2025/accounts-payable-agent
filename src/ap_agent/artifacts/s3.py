@@ -50,7 +50,7 @@ from ap_agent.artifacts.storage import (
     safe_artifact_filename,
     spool_stream_to_file,
 )
-from ap_agent.config.deployment import S3StorageConfig
+from ap_agent.config.deployment import AwsS3Config, S3StorageConfig
 from ap_agent.exceptions import ArtifactIntegrityError, OperationsRequestRejectedError
 
 __all__ = [
@@ -59,6 +59,7 @@ __all__ = [
     "object_key_for",
     "S3ArtifactStore",
     "build_s3_client",
+    "build_aws_s3_client",
 ]
 
 OBJECT_URI_PREFIX = "object://"
@@ -345,5 +346,26 @@ def build_s3_client(config: S3StorageConfig) -> Any:
             retries={"max_attempts": 3, "mode": "standard"},
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
+        ),
+    )
+
+
+def build_aws_s3_client(config: AwsS3Config) -> Any:
+    """Native Amazon S3 client (M11E.1). Credentials come from the default
+    AWS chain -- on Lambda, the function's execution role -- never from the
+    application's configuration. Regional virtual-hosted endpoint, SigV4,
+    bounded timeouts. Imported lazily."""
+
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        region_name=config.region,
+        config=Config(
+            signature_version="s3v4",
+            connect_timeout=config.connect_timeout_seconds,
+            read_timeout=config.read_timeout_seconds,
+            retries={"max_attempts": 3, "mode": "standard"},
         ),
     )
