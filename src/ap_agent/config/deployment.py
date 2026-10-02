@@ -24,17 +24,27 @@ __all__ = [
     "ENVIRONMENT_ENVIRONMENT_VARIABLE",
     "AUTH_MODE_ENVIRONMENT_VARIABLE",
     "ARTIFACT_STORAGE_ENVIRONMENT_VARIABLE",
+    "PLATFORM_AUTH_MODE_ENVIRONMENT_VARIABLE",
+    "QUEUE_BACKEND_ENVIRONMENT_VARIABLE",
     "DeploymentEnvironment",
     "AuthMode",
+    "PlatformAuthMode",
+    "QueueBackend",
     "StorageMode",
     "ClerkConfig",
     "S3StorageConfig",
+    "AwsS3Config",
+    "SqsDispatchConfig",
     "HostedConfigurationError",
     "load_deployment_environment",
     "load_auth_mode",
     "load_clerk_config",
     "load_storage_mode",
     "load_s3_config",
+    "load_platform_auth_mode",
+    "load_aws_s3_config",
+    "load_queue_backend",
+    "load_sqs_config",
     "hosted_configuration_problems",
     "describe_configuration_status",
     "dsn_separation_problems",
@@ -57,6 +67,16 @@ S3_REGION_ENVIRONMENT_VARIABLE = "AP_AGENT_S3_REGION"
 
 ARTIFACT_ROOT_ENVIRONMENT_VARIABLE = "AP_AGENT_ARTIFACT_ROOT"
 
+# M11E.1 (AWS): how the *platform* authenticates the caller before Clerk is
+# consulted. `bearer` (default, Render/R2) reads the Clerk token from
+# `Authorization: Bearer`. `aws_sigv4` is for the IAM-protected Lambda
+# Function URL, where SigV4 occupies `Authorization`: the Clerk token then
+# arrives only in a dedicated server-to-server header.
+PLATFORM_AUTH_MODE_ENVIRONMENT_VARIABLE = "AP_AGENT_PLATFORM_AUTH_MODE"
+QUEUE_BACKEND_ENVIRONMENT_VARIABLE = "AP_AGENT_QUEUE_BACKEND"
+SQS_QUEUE_URL_ENVIRONMENT_VARIABLE = "AP_AGENT_SQS_QUEUE_URL"
+AWS_REGION_ENVIRONMENT_VARIABLE = "AWS_REGION"
+
 _BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 _REGION_PATTERN = re.compile(r"^[a-z0-9-]{2,32}$")
 
@@ -72,9 +92,22 @@ class AuthMode(str, Enum):
     CLERK_JWT = "clerk_jwt"
 
 
+class PlatformAuthMode(str, Enum):
+    BEARER = "bearer"
+    AWS_SIGV4 = "aws_sigv4"
+
+
+class QueueBackend(str, Enum):
+    NONE = "none"
+    SQS = "sqs"
+
+
 class StorageMode(str, Enum):
     LOCAL = "local"
     S3 = "s3"
+    # M11E.1: native Amazon S3 using the Lambda execution role's credentials
+    # (no endpoint, no access keys). `S3` stays the Cloudflare R2 mode.
+    AWS_S3 = "aws_s3"
 
 
 class HostedConfigurationError(Exception):
@@ -108,6 +141,23 @@ class S3StorageConfig:
     region: str = "auto"
     connect_timeout_seconds: float = 5.0
     read_timeout_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
+class AwsS3Config:
+    """Native Amazon S3. No credentials here: they come from the Lambda
+    execution role through the default AWS credential chain."""
+
+    bucket: str
+    region: str
+    connect_timeout_seconds: float = 5.0
+    read_timeout_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
+class SqsDispatchConfig:
+    queue_url: str
+    region: str
 
 
 def _environment(source: Optional[Mapping[str, str]]) -> Mapping[str, str]:
@@ -148,6 +198,56 @@ def load_storage_mode(source: Optional[Mapping[str, str]] = None) -> StorageMode
         return StorageMode(raw)
     except ValueError as error:
         raise HostedConfigurationError((f"{ARTIFACT_STORAGE_ENVIRONMENT_VARIABLE}_INVALID",)) from error
+
+
+def load_platform_auth_mode(source: Optional[Mapping[str, str]] = None) -> PlatformAuthMode:
+    raw = _environment(source).get(PLATFORM_AUTH_MODE_ENVIRONMENT_VARIABLE, "").strip().lower()
+
+    if not raw:
+        return PlatformAuthMode.BEARER
+
+    try:
+        return PlatformAuthMode(raw)
+    except ValueError as error:
+        raise HostedConfigurationError((f"{PLATFORM_AUTH_MODE_ENVIRONMENT_VARIABLE}_INVALID",)) from error
+
+
+def load_queue_backend(source: Optional[Mapping[str, str]] = None) -> QueueBackend:
+    raw = _environment(source).get(QUEUE_BACKEND_ENVIRONMENT_VARIABLE, "").strip().lower()
+
+    if not raw:
+        return QueueBackend.NONE
+
+    try:
+        return QueueBackend(raw)
+    except ValueError as error:
+        raise HostedConfigurationError((f"{QUEUE_BACKEND_ENVIRONMENT_VARIABLE}_INVALID",)) from error
+
+
+def load_aws_s3_config(source: Optional[Mapping[str, str]] = None) -> Optional[AwsS3Config]:
+    """Returns `None` unless a bucket is configured. A missing or `auto`
+    region is reported by `hosted_configuration_problems`."""
+
+    env = _environment(source)
+    bucket = env.get(S3_BUCKET_ENVIRONMENT_VARIABLE, "").strip()
+
+    if not bucket:
+        return None
+
+    region = (
+        env.get(S3_REGION_ENVIRONMENT_VARIABLE, "").strip() or env.get(AWS_REGION_ENVIRONMENT_VARIABLE, "").strip()
+    )
+    return AwsS3Config(bucket=bucket, region=region)
+
+
+def load_sqs_config(source: Optional[Mapping[str, str]] = None) -> Optional[SqsDispatchConfig]:
+    env = _environment(source)
+    url = env.get(SQS_QUEUE_URL_ENVIRONMENT_VARIABLE, "").strip()
+
+    if not url:
+        return None
+
+    return SqsDispatchConfig(queue_url=url, region=env.get(AWS_REGION_ENVIRONMENT_VARIABLE, "").strip())
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -226,6 +326,10 @@ def hosted_configuration_problems(
     artifact_root_configured: bool,
     operations_enabled: bool,
     requires_storage: bool,
+    aws_s3: Optional[AwsS3Config] = None,
+    platform_auth_mode: PlatformAuthMode = PlatformAuthMode.BEARER,
+    queue_backend: QueueBackend = QueueBackend.NONE,
+    sqs: Optional[SqsDispatchConfig] = None,
 ) -> tuple[str, ...]:
     """Every reason the configuration is unusable. Empty means acceptable.
 
@@ -258,7 +362,7 @@ def hosted_configuration_problems(
                 problems.append("CLERK_AUTHORIZED_PARTIES_MALFORMED")
 
     if hosted:
-        if storage_mode is not StorageMode.S3:
+        if storage_mode not in (StorageMode.S3, StorageMode.AWS_S3):
             problems.append("HOSTED_REQUIRES_OBJECT_STORAGE")
 
         if artifact_root_configured:
@@ -280,6 +384,34 @@ def hosted_configuration_problems(
             if not _REGION_PATTERN.fullmatch(s3.region):
                 problems.append("S3_REGION_MALFORMED")
 
+    if storage_mode is StorageMode.AWS_S3:
+        if aws_s3 is None:
+            problems.append("AWS_S3_CONFIGURATION_INCOMPLETE")
+        else:
+            if not _BUCKET_PATTERN.fullmatch(aws_s3.bucket):
+                problems.append("S3_BUCKET_MALFORMED")
+
+            if not _REGION_PATTERN.fullmatch(aws_s3.region) or aws_s3.region == "auto":
+                problems.append("S3_REGION_MALFORMED")
+
+    if platform_auth_mode is PlatformAuthMode.AWS_SIGV4:
+        # The dedicated Clerk header is only meaningful (and only safe) where
+        # the platform has already authenticated the caller with IAM.
+        if auth_mode is not AuthMode.CLERK_JWT:
+            problems.append("AWS_SIGV4_REQUIRES_AUTH_MODE_CLERK_JWT")
+
+        if not hosted:
+            problems.append("AWS_SIGV4_REQUIRES_HOSTED_ENVIRONMENT")
+
+    if queue_backend is QueueBackend.SQS:
+        if sqs is None:
+            problems.append("SQS_QUEUE_URL_MISSING")
+        else:
+            parts = urlsplit(sqs.queue_url)
+
+            if parts.scheme != "https" or not (parts.hostname or "").startswith("sqs.") or not sqs.region:
+                problems.append("SQS_QUEUE_URL_MALFORMED")
+
     return tuple(problems)
 
 
@@ -294,6 +426,7 @@ _STATUS_VARIABLES = (
     S3_REGION_ENVIRONMENT_VARIABLE,
     ARTIFACT_ROOT_ENVIRONMENT_VARIABLE,
     "AP_AGENT_POSTGRES_DSN",
+    SQS_QUEUE_URL_ENVIRONMENT_VARIABLE,
 )
 
 
@@ -314,6 +447,12 @@ def describe_configuration_status(source: Optional[Mapping[str, str]] = None) ->
     )
     status[AUTH_MODE_ENVIRONMENT_VARIABLE] = _mode(
         AUTH_MODE_ENVIRONMENT_VARIABLE, "prototype_headers", tuple(item.value for item in AuthMode)
+    )
+    status[PLATFORM_AUTH_MODE_ENVIRONMENT_VARIABLE] = _mode(
+        PLATFORM_AUTH_MODE_ENVIRONMENT_VARIABLE, "bearer", tuple(item.value for item in PlatformAuthMode)
+    )
+    status[QUEUE_BACKEND_ENVIRONMENT_VARIABLE] = _mode(
+        QUEUE_BACKEND_ENVIRONMENT_VARIABLE, "none", tuple(item.value for item in QueueBackend)
     )
     status[ARTIFACT_STORAGE_ENVIRONMENT_VARIABLE] = _mode(
         ARTIFACT_STORAGE_ENVIRONMENT_VARIABLE, "local", tuple(item.value for item in StorageMode)

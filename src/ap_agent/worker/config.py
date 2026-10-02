@@ -16,11 +16,13 @@ from typing import Optional
 from uuid import UUID
 
 from ap_agent.config.deployment import (
+    AwsS3Config,
     DeploymentEnvironment,
     HostedConfigurationError,
     S3StorageConfig,
     StorageMode,
     hosted_configuration_problems,
+    load_aws_s3_config,
     load_deployment_environment,
     load_s3_config,
     load_storage_mode,
@@ -70,6 +72,8 @@ class WorkerConfig:
     environment: DeploymentEnvironment = DeploymentEnvironment.DEVELOPMENT
     storage_mode: StorageMode = StorageMode.LOCAL
     s3: Optional[S3StorageConfig] = None
+    # M11E.1: native Amazon S3 through the execution role (no keys).
+    aws_s3: Optional[AwsS3Config] = None
 
     @property
     def hosted(self) -> bool:
@@ -84,6 +88,7 @@ def load_worker_config(environment: dict[str, str] | None = None) -> WorkerConfi
     environment = load_deployment_environment(env)
     storage_mode = load_storage_mode(env)
     s3 = load_s3_config(env)
+    aws_s3 = load_aws_s3_config(env) if storage_mode is StorageMode.AWS_S3 else None
 
     artifact_root_text = env.get(ARTIFACT_ROOT_ENVIRONMENT_VARIABLE, "").strip()
     reference_text = env.get(REFERENCE_DATA_ENVIRONMENT_VARIABLE, "").strip()
@@ -98,6 +103,7 @@ def load_worker_config(environment: dict[str, str] | None = None) -> WorkerConfi
             artifact_root_configured=bool(artifact_root_text),
             operations_enabled=True,
             requires_storage=True,
+            aws_s3=aws_s3,
         )
     )
 
@@ -156,4 +162,5 @@ def load_worker_config(environment: dict[str, str] | None = None) -> WorkerConfi
         environment=environment,
         storage_mode=storage_mode,
         s3=s3,
+        aws_s3=aws_s3,
     )

@@ -546,6 +546,49 @@ class OperationsRepository:
             )
             return job
 
+    def peek_job(self, job_id: UUID) -> Optional[WorkflowJob]:
+        """Read one job by id under the narrow worker queue scope (M11E.1: the
+        queue message names a job; the worker re-reads it from the database
+        rather than trusting the message)."""
+
+        with self.worker_transaction() as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY;")
+            cursor.execute(f"SELECT {_JOB_COLUMNS} FROM ap_agent.workflow_jobs WHERE job_id = %s;", (job_id,))
+            row = cursor.fetchone()
+            return None if row is None else _row_to_job(row)
+
+    def claim_job(self, job_id: UUID, *, tenant_id: UUID) -> Optional[WorkflowJob]:
+        """Like `claim_next_job`, but for one named job (M11E.1, queue-driven
+        worker): `QUEUED -> RUNNING` in one short transaction, or `None` when
+        the job is not `QUEUED` any more (already claimed, finished, or a
+        duplicate delivery). Claiming is therefore idempotent."""
+
+        with self.worker_transaction() as cursor:
+            cursor.execute(
+                f"""
+                UPDATE ap_agent.workflow_jobs AS job
+                SET status = 'RUNNING', attempt_count = 1,
+                    started_at = clock_timestamp(), updated_at = clock_timestamp(),
+                    lock_version = job.lock_version + 1
+                WHERE job.job_id = %s AND job.tenant_id = %s AND job.status = 'QUEUED'
+                RETURNING {", ".join("job." + c.strip() for c in _JOB_COLUMNS.split(","))};
+                """,
+                (job_id, tenant_id),
+            )
+            row = cursor.fetchone()
+
+            if row is None:
+                return None
+
+            job = _row_to_job(row)
+            cursor.execute("SELECT set_config('ap_agent.tenant_id', %s, TRUE);", (str(job.tenant_id),))
+            self.insert_event(
+                cursor, tenant_id=job.tenant_id, job_id=job.job_id, event_type="JOB_CLAIMED",
+                status="RUNNING", stage=job.current_stage, attempt_number=1,
+                message="Job claimed by the worker.",
+            )
+            return job
+
     def update_progress(
         self,
         job: WorkflowJob,
