@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Accounts payable agent -- ON-DEMAND ECS Fargate worker (M11E.1 FALLBACK; NOT part of the default deployment).
+  Deploy this only if the Lambda worker cannot run real PaddleOCR within 12 minutes or its image exceeds Lambda's
+  10 GB limit (docs/m11e1_aws_go_live_report.md). It runs a task only while a job message exists: no ECS service, no
+  NAT gateway, no load balancer. EventBridge Pipes starts one task per SQS message; the task processes that one job
+  and exits. Disable the Lambda event source (set it to disabled) before enabling this so only one path consumes the queue.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedPattern: "^[a-z][a-z0-9-]{1,14}$"
+  WorkerImageUri:
+    Type: String
+    Description: Image of the existing worker (docker/worker.Dockerfile), run with the dispatch-task command below.
+  JobsQueueArn:
+    Type: String
+    Description: JobsQueue ARN (template.yaml stack; derive from the QueueUrl output).
+  UploadBucketName:
+    Type: String
+  SsmPrefix:
+    Type: String
+    Default: /ap-agent/production
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets (e.g. the default VPC). Tasks get a public IP; there is no NAT gateway.
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: A security group with no inbound rules and open outbound traffic.
+  TaskCpu:
+    Type: String
+    Default: "4096"
+    AllowedValues: ["2048", "4096", "8192"]
+  TaskMemoryMb:
+    Type: String
+    Default: "16384"
+    AllowedValues: ["8192", "16384", "32768"]
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30]
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "ap-agent-${Environment}-ocr"
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/ap-agent-${Environment}-ocr"
+      RetentionInDays: !Ref LogRetentionDays
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: "sts:AssumeRole" }
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: "sts:AssumeRole" }
+      Policies:
+        - PolicyName: ocr-task
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "ssm:GetParameter"
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/postgres-runtime-dsn"
+              - Effect: Allow
+                Action: "s3:GetObject"
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${UploadBucketName}/tenants/*"
+              - Effect: Allow
+                Action: "s3:ListBucket"
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${UploadBucketName}"
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "ap-agent-${Environment}-ocr"
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemoryMb
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: worker
+          Image: !Ref WorkerImageUri
+          Essential: true
+          Command: [python, -m, ap_agent.worker.dispatch_task]
+          Environment:
+            - { Name: AP_AGENT_ARTIFACT_STORAGE, Value: aws_s3 }
+            - { Name: AP_AGENT_S3_BUCKET, Value: !Ref UploadBucketName }
+            - { Name: AP_AGENT_S3_REGION, Value: !Ref "AWS::Region" }
+            - { Name: AWS_REGION, Value: !Ref "AWS::Region" }
+            - { Name: AP_AGENT_SSM_PARAMETERS, Value: !Sub "AP_AGENT_POSTGRES_DSN=${SsmPrefix}/postgres-runtime-dsn" }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: worker
+
+  PipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: pipes.amazonaws.com }, Action: "sts:AssumeRole" }
+      Policies:
+        - PolicyName: pipe
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"]
+                Resource: !Ref JobsQueueArn
+              - Effect: Allow
+                Action: "ecs:RunTask"
+                Resource: !Ref TaskDefinition
+                Condition:
+                  ArnEquals:
+                    "ecs:cluster": !GetAtt Cluster.Arn
+              - Effect: Allow
+                Action: "iam:PassRole"
+                Resource: [!GetAtt ExecutionRole.Arn, !GetAtt TaskRole.Arn]
+
+  JobPipe:
+    Type: AWS::Pipes::Pipe
+    Properties:
+      Name: !Sub "ap-agent-${Environment}-job-to-fargate"
+      RoleArn: !GetAtt PipeRole.Arn
+      Source: !Ref JobsQueueArn
+      SourceParameters:
+        SqsQueueParameters:
+          BatchSize: 1
+      Target: !GetAtt Cluster.Arn
+      TargetParameters:
+        EcsTaskParameters:
+          TaskDefinitionArn: !Ref TaskDefinition
+          LaunchType: FARGATE
+          NetworkConfiguration:
+            AwsvpcConfiguration:
+              AssignPublicIp: ENABLED
+              Subnets: !Ref SubnetIds
+              SecurityGroups: !Ref SecurityGroupIds
+          Overrides:
+            ContainerOverrides:
+              - Name: worker
+                Environment:
+                  - Name: AP_AGENT_DISPATCH_MESSAGE
+                    Value: <$.body>
+
+Outputs:
+  ClusterArn:
+    Value: !GetAtt Cluster.Arn
+  TaskDefinitionArn:
+    Value: !Ref TaskDefinition
