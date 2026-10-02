@@ -14,7 +14,7 @@ execution harness, **not** `claude/m11e1-aws-go-live` (deviation D-1). The worki
 | Level | Status |
 |---|---|
 | **Verified locally** | New and existing backend tests (real PostgreSQL 16 for the database-backed ones, incl. the real-PaddleOCR worker tests once PaddleOCR was installed); frontend type-check, lint, 596 unit/component tests, production build (plain and standalone), build-secret scan; the **existing** hosted acceptance (14/14 browser scenarios, 21/21 database checks, object-store check) proving the Render/R2 path is unchanged; `cfn-lint` (3 templates) and `sam validate --lint`; the policy checks of `scripts/verify_aws_templates.py`; the standalone Next.js server started with the Lambda entry point; a real-PaddleOCR benchmark of the worker path (§6). |
-| **Verified in CI (to confirm on the PR)** | The four Lambda images are built, size-checked (< 10 GB), smoke-tested and scanned; the worker image serves a real OCR prediction under a **read-only root filesystem with no network**; the same benchmark runs inside the worker image under a 4 vCPU / 8 GB ceiling with the model/font hosts blocked. See §9. |
+| **Verified in CI** | On head `f2706d0`: templates, all four Lambda images (built, < 10 GB, smoke-tested incl. a real OCR prediction under a read-only root with no network, scanned) and the in-image real-PaddleOCR benchmark (§6) pass. `real-integration` and `postgres-acceptance` fail on connection/authentication errors against the Neon CI database (secret `AP_AGENT_TEST_POSTGRES_DSN`), before any test logic — not attributable to this diff, unverified on `main`. |
 | **Not verified (needs AWS)** | Everything that touches a real AWS service or provider: CloudFormation creating the stack, Lambda Web Adapter behaviour with these images, SigV4 acceptance by a real `AWS_IAM` Function URL, S3 acceptance of the presigned POST policy, SQS/Lambda event-source behaviour, real Clerk sign-in, real Neon, cold-start times. The Lambda images could not be built in the authoring sandbox (its build containers have no network and `public.ecr.aws` is blocked), which is why CI builds them. |
 | **Deployed / hosted acceptance** | **No.** See §10 for the exact pending checks. |
 
@@ -151,11 +151,24 @@ and reports it in the job summary. **Models and fonts are baked into the image**
 PaddleX downloads two fonts on first use, so the build now fetches them too and a read-only-root / no-network smoke test
 and a blocked-host benchmark enforce "no run-time download".
 
+**CI measurement inside the worker image (run 37025062330, head `f2706d0`; 4 vCPU / 8192 MB cgroup, read-only root
+filesystem, model/font hosts blocked, fresh process per job, local TLS PostgreSQL) — PASSED:**
+
+| Document | Seconds | Outcome | Peak RSS |
+|---|---:|---|---:|
+| `08181_flat_document.png` | 53.7 | SUCCEEDED | 3,374 MB |
+| `08181_warped_document_perspective_shadow.jpg` | 64.4 | REVIEW_REQUIRED | 4,303 MB |
+| `Template1_Instance90.jpg` | 33.0 | REVIEW_REQUIRED | 1,064 MB |
+| `invoice_Aaron Bergman_36258.pdf` | 79.0 | REVIEW_REQUIRED | 6,610 MB |
+
+Slowest 79 s (limit 720 s); peak 6.6 GB fits 8192 MB with ~19 % headroom and would not fit 4096 MB or 6144 MB. This also
+proves the baked models and fonts need no network and no writable image path. Still a GitHub-runner measurement, not
+Lambda itself.
+
 **Verdict:** Lambda is viable *for the controlled invoices at 8192 MB*. It is **not proven for the largest allowed input**
 (a 10 MB, many-page scan could need more than the 10,240 MB Lambda maximum). The Fargate fallback is therefore kept ready
 and isolated; the alarms (`WorkerDurationAlarm` > 12 min, `WorkerErrorsAlarm`) and the `WORKER_PROCESS_FAILED` job error
-are the triggers to use it. The authoritative Lambda-like numbers come from the CI benchmark (§9); re-confirm them on the
-PR before relying on this verdict.
+are the triggers to use it. The CI benchmark above is the closest Lambda-like measurement available before deployment.
 
 ## 7. Deployed resource summary and hosted URL
 
@@ -189,7 +202,7 @@ set in §2 and the URL is the `FrontendUrl` output.
   result in the job summary and as an artifact).
 * `m11a-frontend.yml`: runs the new M11E.1 unit tests; `m8-postgres-acceptance.yml`: the full regression including the
   real-PostgreSQL M11E.1 tests and real PaddleOCR now also runs for this branch.
-* CI result at the time of writing: see the PR (checks were running when this report was written).
+* CI result: see §1; the two Neon-backed jobs need the repository's test-database secret fixed and a re-run.
 
 ## 10. Remaining hosted checks and the single hand-off
 
