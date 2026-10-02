@@ -48,7 +48,8 @@ jobs:
         run: python scripts/verify_aws_templates.py
       - name: No account id, DSN or secret in deploy/aws
         run: |
-          ! grep -rEn "[0-9]{12}|postgres(ql)?://|sk_(live|test)_|-----BEGIN|AKIA[0-9A-Z]{8,}" deploy/aws --include='*.yaml' --include='*.sh'
+          # (a 12-digit account id standing alone; UUID-shaped placeholders and the script's own key-prefix checks are fine)
+          ! grep -rEn "(^|[^0-9A-Za-z-])[0-9]{12}([^0-9A-Za-z-]|$)|postgres(ql)?://|sk_(live|test)_[A-Za-z0-9]{8,}|-----BEGIN|AKIA[0-9A-Z]{8,}" deploy/aws --include='*.yaml' --include='*.sh'
       - name: Shell scripts parse
         run: for f in deploy/aws/scripts/*.sh; do bash -n "$f"; done
 
@@ -158,15 +159,6 @@ jobs:
     env:
       # Throwaway password of a disposable CI database that exists only for this job.
       BENCH_DB_PASSWORD: ci-only-disposable
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: ci-only-disposable
-          POSTGRES_DB: ap_agent_bench
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -179,9 +171,16 @@ jobs:
           push: false
           tags: ap-agent-worker-lambda:bench
           cache-from: type=gha,scope=lambda-worker
-      - name: Prepare a disposable runtime role
+      - name: Start a disposable PostgreSQL with TLS (the application requires SSL and channel binding)
         run: |
-          docker run --rm --network host -e PGPASSWORD="${BENCH_DB_PASSWORD}" postgres:16 psql -h 127.0.0.1 -U postgres -d ap_agent_bench \
+          mkdir -p "$RUNNER_TEMP/pgcert" && cd "$RUNNER_TEMP/pgcert"
+          openssl req -new -x509 -days 1 -nodes -subj /CN=localhost -out server.crt -keyout server.key
+          sudo chown 999:999 server.crt server.key && sudo chmod 600 server.key
+          docker run -d --name bench-pg --network host -e POSTGRES_PASSWORD="${BENCH_DB_PASSWORD}" -e POSTGRES_DB=ap_agent_bench \
+            -v "$RUNNER_TEMP/pgcert:/certs:ro" postgres:16 -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+          for i in $(seq 1 30); do docker exec bench-pg pg_isready -U postgres -d ap_agent_bench && break; sleep 1; done
+          sleep 3
+          docker exec -e PGPASSWORD="${BENCH_DB_PASSWORD}" bench-pg psql -h 127.0.0.1 -U postgres -d ap_agent_bench \
             -c "CREATE ROLE ap_agent_bench_app LOGIN PASSWORD '${BENCH_DB_PASSWORD}' NOSUPERUSER NOBYPASSRLS;"
       - name: Benchmark real PaddleOCR (4 vCPU, 8192 MB)
         run: |
@@ -190,8 +189,8 @@ jobs:
             --read-only --tmpfs /tmp:rw,exec,size=3g \
             --add-host paddle-model-ecology.bj.bcebos.com:127.0.0.1 --add-host huggingface.co:127.0.0.1 \
             --add-host hf-mirror.com:127.0.0.1 --add-host modelscope.cn:127.0.0.1 \
-            -e AP_AGENT_POSTGRES_MIGRATION_DSN="postgresql://postgres:${BENCH_DB_PASSWORD}@127.0.0.1:5432/ap_agent_bench" \
-            -e AP_AGENT_POSTGRES_DSN="postgresql://ap_agent_bench_app:${BENCH_DB_PASSWORD}@127.0.0.1:5432/ap_agent_bench" \
+            -e AP_AGENT_POSTGRES_MIGRATION_DSN="postgresql://postgres:${BENCH_DB_PASSWORD}@127.0.0.1:5432/ap_agent_bench?sslmode=require&channel_binding=require" \
+            -e AP_AGENT_POSTGRES_DSN="postgresql://ap_agent_bench_app:${BENCH_DB_PASSWORD}@127.0.0.1:5432/ap_agent_bench?sslmode=require&channel_binding=require" \
             -e AP_AGENT_POSTGRES_RUNTIME_ROLE=ap_agent_bench_app \
             -e AP_AGENT_ENVIRONMENT=test \
             -v "$PWD/tests/fixtures/invoices:/fixtures:ro" -v "$PWD/scripts/benchmark_worker.py:/app/scripts/benchmark_worker.py:ro" \
