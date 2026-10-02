@@ -177,6 +177,7 @@ jobs:
           openssl req -new -x509 -days 1 -nodes -subj /CN=localhost -out server.crt -keyout server.key
           sudo chown 999:999 server.crt server.key && sudo chmod 600 server.key
           docker run -d --name bench-pg --network host -e POSTGRES_PASSWORD="${BENCH_DB_PASSWORD}" -e POSTGRES_DB=ap_agent_bench \
+            -e POSTGRES_HOST_AUTH_METHOD=scram-sha-256 -e POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256" \
             -v "$RUNNER_TEMP/pgcert:/certs:ro" postgres:16 -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
           for i in $(seq 1 30); do docker exec bench-pg pg_isready -U postgres -d ap_agent_bench && break; sleep 1; done
           sleep 3
