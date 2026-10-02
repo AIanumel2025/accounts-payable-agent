@@ -19,6 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ap_agent.exceptions import (
+    AuthenticationUnavailableError,
     OperationsRequestRejectedError,
     PostgresConfigurationError,
     ReviewAuthenticationError,
@@ -154,6 +155,15 @@ def register_exception_handlers(app) -> None:  # `app: FastAPI`, untyped to avoi
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content=_error_envelope(request_id, exc.details.get("errors", ("AUTHENTICATION_FAILED",))),
+        )
+
+    @app.exception_handler(AuthenticationUnavailableError)
+    async def _handle_authentication_unavailable(request: Request, exc: AuthenticationUnavailableError) -> JSONResponse:
+        request_id = str(uuid4())
+        _LOGGER.error("Authentication dependency unavailable (request_id=%s): %s", request_id, exc.reason)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=_error_envelope(request_id, ("AUTHENTICATION_UNAVAILABLE",)),
         )
 
     @app.exception_handler(ReviewCommandRejectedError)

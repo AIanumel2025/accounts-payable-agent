@@ -57,15 +57,13 @@ async function pageToken(page: Page): Promise<string> {
   return token!;
 }
 
-// A file chosen before React hydrates is silently dropped, so re-select until
-// the selection is reflected in the rendered page.
+// The file input is disabled until React has hydrated (M11E), so waiting for
+// it to become enabled is all that is needed -- no re-selection loop.
 async function chooseFile(page: Page, file: string | { name: string; mimeType: string; buffer: Buffer }) {
   const name = typeof file === "string" ? path.basename(file) : file.name;
-  await expect(page.getByTestId("upload-form")).toBeVisible();
-  await expect(async () => {
-    await page.getByTestId("file-input").setInputFiles(file);
-    await expect(page.getByTestId("selected-file")).toContainText(name, { timeout: 1_000 });
-  }).toPass({ timeout: 15_000 });
+  await expect(page.getByTestId("file-input")).toBeEnabled();
+  await page.getByTestId("file-input").setInputFiles(file);
+  await expect(page.getByTestId("selected-file")).toContainText(name);
 }
 
 async function upload(page: Page, file: string) {
@@ -265,10 +263,9 @@ test.describe.serial("M11D operations console (real stack)", () => {
       await scan(`operations ${viewport.width}px`);
 
       // With a file selected and a validation error showing.
-      await expect(async () => {
-        await page.getByTestId("file-input").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
-        await expect(page.getByTestId("file-error")).toBeVisible({ timeout: 1_000 });
-      }).toPass({ timeout: 15_000 });
+      await expect(page.getByTestId("file-input")).toBeEnabled();
+      await page.getByTestId("file-input").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
+      await expect(page.getByTestId("file-error")).toBeVisible();
       await scan(`operations with validation error ${viewport.width}px`);
 
       await page.goto(`${S.urls.admin}/operations`);
@@ -292,12 +289,11 @@ test.describe.serial("M11D operations console (real stack)", () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${S.urls.admin}/operations`);
 
+    await expect(page.getByTestId("file-input")).toBeEnabled();
     await page.getByTestId("file-input").focus();
     await expect(page.getByTestId("file-input")).toBeFocused();
-    await expect(async () => {
-      await page.getByTestId("file-input").setInputFiles(AUTOMATIC_FIXTURE);
-      await expect(page.getByTestId("operations-announcer")).toContainText("Selected", { timeout: 1_000 });
-    }).toPass({ timeout: 15_000 });
+    await page.getByTestId("file-input").setInputFiles(AUTOMATIC_FIXTURE);
+    await expect(page.getByTestId("operations-announcer")).toContainText("Selected");
     await expect(page.getByTestId("operations-announcer")).toContainText("Selected 08181_flat_document.png.");
 
     await page.keyboard.press("Tab");

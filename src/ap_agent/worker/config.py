@@ -9,11 +9,22 @@ is explicitly truthy: the default is fail-closed, independent of the API's
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
+from ap_agent.config.deployment import (
+    DeploymentEnvironment,
+    HostedConfigurationError,
+    S3StorageConfig,
+    StorageMode,
+    hosted_configuration_problems,
+    load_deployment_environment,
+    load_s3_config,
+    load_storage_mode,
+)
 from ap_agent.models.operations import WorkerSettings
 
 __all__ = [
@@ -47,13 +58,22 @@ class WorkerConfigurationError(Exception):
 @dataclass(frozen=True)
 class WorkerConfig:
     execution_enabled: bool
-    artifact_root: Path
+    # `None` when the worker reads uploads from object storage (M11E).
+    artifact_root: Optional[Path]
     phase_artifact_root: Path
     reference_data_directory: Path
     ocr_provider: str = "paddleocr"
     # Optional: serve a single tenant only (tests/demo). Unset in production.
     tenant_scope: Optional[UUID] = None
     settings: WorkerSettings = field(default_factory=WorkerSettings)
+    # M11E: deployment environment and object storage.
+    environment: DeploymentEnvironment = DeploymentEnvironment.DEVELOPMENT
+    storage_mode: StorageMode = StorageMode.LOCAL
+    s3: Optional[S3StorageConfig] = None
+
+    @property
+    def hosted(self) -> bool:
+        return self.environment is DeploymentEnvironment.HOSTED
 
 
 def load_worker_config(environment: dict[str, str] | None = None) -> WorkerConfig:
@@ -61,20 +81,60 @@ def load_worker_config(environment: dict[str, str] | None = None) -> WorkerConfi
 
     enabled = env.get(ENABLE_WORKER_EXECUTION_ENVIRONMENT_VARIABLE, "").strip().lower() in _TRUTHY
 
+    environment = load_deployment_environment(env)
+    storage_mode = load_storage_mode(env)
+    s3 = load_s3_config(env)
+
     artifact_root_text = env.get(ARTIFACT_ROOT_ENVIRONMENT_VARIABLE, "").strip()
     reference_text = env.get(REFERENCE_DATA_ENVIRONMENT_VARIABLE, "").strip()
 
-    if not artifact_root_text:
+    problems = list(
+        hosted_configuration_problems(
+            environment=environment,
+            auth_mode=None,
+            clerk=None,
+            storage_mode=storage_mode,
+            s3=s3,
+            artifact_root_configured=bool(artifact_root_text),
+            operations_enabled=True,
+            requires_storage=True,
+        )
+    )
+
+    provider = env.get(OCR_PROVIDER_ENVIRONMENT_VARIABLE, "paddleocr").strip().lower() or "paddleocr"
+
+    if environment is DeploymentEnvironment.HOSTED:
+        # Hosted mode runs the intended real OCR provider, one tenant-agnostic worker.
+        if provider != "paddleocr":
+            problems.append("HOSTED_REQUIRES_OCR_PROVIDER_PADDLEOCR")
+
+        if env.get(TENANT_SCOPE_ENVIRONMENT_VARIABLE, "").strip():
+            problems.append("HOSTED_FORBIDS_WORKER_TENANT_SCOPE")
+
+    if environment is DeploymentEnvironment.HOSTED:
+        from ap_agent.config.deployment import dsn_separation_problems
+
+        problems.extend(dsn_separation_problems(env))
+
+    if problems:
+        raise HostedConfigurationError(tuple(problems))
+
+    if storage_mode is StorageMode.LOCAL and not artifact_root_text:
         raise WorkerConfigurationError(f"{ARTIFACT_ROOT_ENVIRONMENT_VARIABLE} is required.")
 
     if not reference_text:
         raise WorkerConfigurationError(f"{REFERENCE_DATA_ENVIRONMENT_VARIABLE} is required.")
 
-    artifact_root = Path(artifact_root_text)
+    artifact_root = Path(artifact_root_text) if artifact_root_text else None
     phase_text = env.get(PHASE_ARTIFACT_ROOT_ENVIRONMENT_VARIABLE, "").strip()
-    phase_root = Path(phase_text) if phase_text else artifact_root / ".phases"
 
-    provider = env.get(OCR_PROVIDER_ENVIRONMENT_VARIABLE, "paddleocr").strip().lower() or "paddleocr"
+    if phase_text:
+        phase_root = Path(phase_text)
+    elif artifact_root is not None:
+        phase_root = artifact_root / ".phases"
+    else:
+        # Object-storage mode: per-job scratch space, removed after each job.
+        phase_root = Path(tempfile.gettempdir()) / "ap-agent-phases"
 
     if provider not in SUPPORTED_OCR_PROVIDERS:
         raise WorkerConfigurationError(f"{OCR_PROVIDER_ENVIRONMENT_VARIABLE} must be one of {SUPPORTED_OCR_PROVIDERS}.")
@@ -93,4 +153,7 @@ def load_worker_config(environment: dict[str, str] | None = None) -> WorkerConfi
         phase_artifact_root=phase_root,
         reference_data_directory=Path(reference_text),
         ocr_provider=provider,
+        environment=environment,
+        storage_mode=storage_mode,
+        s3=s3,
     )

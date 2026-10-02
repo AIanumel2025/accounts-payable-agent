@@ -21,9 +21,11 @@
     "demo:m11c": "node scripts/demo-m11c.mjs",
     "test:e2e:real-actions": "node scripts/run-real-actions.mjs",
     "test:e2e:real-operations": "node scripts/run-real-operations.mjs",
-    "demo:m11d": "node scripts/demo-m11d.mjs"
+    "demo:m11d": "node scripts/demo-m11d.mjs",
+    "test:e2e:hosted": "node scripts/run-hosted-acceptance.mjs"
   },
   "dependencies": {
+    "@clerk/nextjs": "7.9.9",
     "next": "16.3.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",

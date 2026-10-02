@@ -1,0 +1,149 @@
+# Render Blueprint for the hosted MVP (M11E).
+#
+#   web    ap-agent-web     PUBLIC   Next.js. The only service the browser reaches.
+#   pserv  ap-agent-api     PRIVATE  FastAPI. No public URL; reachable only from the web service
+#                                    and the worker's network. Also runs the single migration step.
+#   worker ap-agent-worker  BACKGROUND  The single M11D OCR worker (exactly one instance).
+#
+# PostgreSQL stays on Neon and object storage on Cloudflare R2: neither is created here.
+# Nothing secret is committed. Every `sync: false` entry is typed into the Render dashboard
+# when the Blueprint is first applied (see docs/m11e_deployment_runbook.md, section 4, for what
+# goes where). Never paste a value into this file.
+#
+# Not used on purpose: autoscaling, extra instances, Redis, a queue service, a cron job.
+
+services:
+  # ---------------------------------------------------------------- public web
+  - type: web
+    name: ap-agent-web
+    runtime: docker
+    dockerfilePath: ./docker/web.Dockerfile
+    dockerContext: .
+    plan: starter
+    numInstances: 1
+    autoDeploy: false
+    healthCheckPath: /sign-in
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: AP_AGENT_ENVIRONMENT
+        value: hosted
+      - key: AP_AGENT_FRONTEND_AUTH_MODE
+        value: clerk_jwt
+      - key: AP_AGENT_FRONTEND_REVIEW_COMMAND_MODE
+        value: commit
+      - key: AP_AGENT_FRONTEND_OPERATIONS_MODE
+        value: enabled
+      # Uploads pass through Next.js to FastAPI to R2: allow 30 s (default elsewhere is 8 s).
+      - key: AP_AGENT_BACKEND_TIMEOUT_MS
+        value: "30000"
+      # Private address of the API service, resolved by Render (host:port) -- never a public URL.
+      - key: AP_AGENT_API_HOSTPORT
+        fromService:
+          type: pserv
+          name: ap-agent-api
+          property: hostport
+      # Signs the page-bound request-forgery tokens; generated once by Render.
+      - key: AP_AGENT_FRONTEND_CSRF_SECRET
+        generateValue: true
+      # Public by design (also passed to the Docker build so it is inlined in the browser bundle).
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      # Secret. Server-side only; never a build argument.
+      - key: CLERK_SECRET_KEY
+        sync: false
+      # Optional: Clerk "JWT public key" (PEM) for networkless session verification.
+      - key: CLERK_JWT_KEY
+        sync: false
+      # Comma-separated https origin(s) of THIS web service (e.g. its onrender.com URL / custom domain).
+      - key: AP_AGENT_CLERK_AUTHORIZED_PARTIES
+        sync: false
+
+  # ---------------------------------------------------------------- private API
+  - type: pserv
+    name: ap-agent-api
+    runtime: docker
+    dockerfilePath: ./docker/api.Dockerfile
+    dockerContext: .
+    plan: starter
+    numInstances: 1
+    autoDeploy: false
+    maxShutdownDelaySeconds: 30
+    # The ONE migration mechanism. Runs once per deploy, after the build and before the new
+    # version starts, only on this service (the web service and the worker never migrate).
+    # Uses the MIGRATION DSN; the migration runner also takes a database advisory lock, so two
+    # overlapping runs cannot interleave. The runtime role never migrates and the migration
+    # owner never serves requests (the API refuses to start if both DSNs are equal).
+    preDeployCommand: python scripts/migrate.py --require-ssl
+    envVars:
+      - key: AP_AGENT_ENVIRONMENT
+        value: hosted
+      - key: PORT
+        value: "8000"
+      - key: AP_AGENT_AUTH_MODE
+        value: clerk_jwt
+      - key: AP_AGENT_ENABLE_OPERATIONS
+        value: "true"
+      - key: AP_AGENT_ENABLE_REVIEW_COMMAND_WRITES
+        value: "true"
+      - key: AP_AGENT_ARTIFACT_STORAGE
+        value: s3
+      - key: AP_AGENT_S3_REGION
+        value: auto
+      # Least-privilege runtime DSN (role without SUPERUSER/BYPASSRLS), Neon POOLED endpoint.
+      - key: AP_AGENT_POSTGRES_DSN
+        sync: false
+      # Migration/admin DSN (schema owner), Neon DIRECT endpoint. Used only by preDeployCommand.
+      - key: AP_AGENT_POSTGRES_MIGRATION_DSN
+        sync: false
+      # Name of the runtime role to grant schema access to after migrating (not a secret).
+      - key: AP_AGENT_POSTGRES_RUNTIME_ROLE
+        sync: false
+      - key: AP_AGENT_CLERK_ISSUER
+        sync: false
+      - key: AP_AGENT_CLERK_AUTHORIZED_PARTIES
+        sync: false
+      - key: AP_AGENT_S3_ENDPOINT_URL
+        sync: false
+      - key: AP_AGENT_S3_BUCKET
+        sync: false
+      - key: AP_AGENT_S3_ACCESS_KEY_ID
+        sync: false
+      - key: AP_AGENT_S3_SECRET_ACCESS_KEY
+        sync: false
+
+  # ---------------------------------------------------------------- OCR worker
+  - type: worker
+    name: ap-agent-worker
+    runtime: docker
+    dockerfilePath: ./docker/worker.Dockerfile
+    dockerContext: .
+    # PaddleOCR needs roughly 2-3 GB resident: use a plan with at least 4 GB of memory.
+    # This is the largest recurring cost of the stack (see the runbook).
+    plan: pro
+    # Exactly one worker: there are no leases or crash recovery in M11E.
+    numInstances: 1
+    autoDeploy: false
+    # SIGTERM lets the in-flight job finish; allow up to 5 minutes for a long OCR run.
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: AP_AGENT_ENVIRONMENT
+        value: hosted
+      - key: AP_AGENT_ENABLE_WORKER_EXECUTION
+        value: "true"
+      - key: AP_AGENT_WORKER_OCR_PROVIDER
+        value: paddleocr
+      - key: AP_AGENT_ARTIFACT_STORAGE
+        value: s3
+      - key: AP_AGENT_S3_REGION
+        value: auto
+      # Worker database DSN: the same least-privilege runtime role (or a dedicated one), pooled endpoint.
+      - key: AP_AGENT_POSTGRES_DSN
+        sync: false
+      - key: AP_AGENT_S3_ENDPOINT_URL
+        sync: false
+      - key: AP_AGENT_S3_BUCKET
+        sync: false
+      - key: AP_AGENT_S3_ACCESS_KEY_ID
+        sync: false
+      - key: AP_AGENT_S3_SECRET_ACCESS_KEY
+        sync: false

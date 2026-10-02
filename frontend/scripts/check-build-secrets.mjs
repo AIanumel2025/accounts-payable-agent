@@ -40,6 +40,13 @@ const FORBIDDEN_PATTERNS = [
   { name: "AP_AGENT_ENABLE_WORKER_EXECUTION variable name", pattern: /AP_AGENT_ENABLE_WORKER_EXECUTION/ },
   { name: "AP_AGENT_ARTIFACT_ROOT variable name", pattern: /AP_AGENT_ARTIFACT_ROOT/ },
   { name: "artifact:// reference", pattern: /artifact:\/\/[0-9a-f]{32}/ },
+  // M11E hosted mode: values (never variable names -- the Clerk SDK legitimately mentions its own) that must not ship.
+  { name: "Clerk secret key value", pattern: /sk_(?:live|test)_[A-Za-z0-9]{8,}/ },
+  { name: "private key material", pattern: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/ },
+  { name: "access key id", pattern: /AKIA[0-9A-Z]{12,}/ },
+  { name: "S3-compatible account endpoint", pattern: /[0-9a-f]{32}\.r2\.cloudflarestorage\.com/ },
+  { name: "AP_AGENT_S3_* / AP_AGENT_CLERK_* / AP_AGENT_API_* variable name", pattern: /AP_AGENT_(?:S3_|CLERK_|API_)/ },
+  { name: "object-store reference", pattern: /object:\/\/[0-9a-f]{32}/ },
   { name: "development actor id (M11C acceptance/demo)", pattern: /real-reviewer-[ab]|demo-reviewer/ },
 ];
 

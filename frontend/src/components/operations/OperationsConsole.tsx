@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent, FormEvent } from "react";
 import { JobList } from "@/components/operations/JobList";
 import { fetchJobList, submitInvoice } from "@/lib/operations/client";
@@ -54,6 +54,11 @@ export function OperationsConsole({ initialJobs, csrfToken, pollIntervalMs }: Op
   const [announcement, setAnnouncement] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [listError, setListError] = useState(false);
+  // Hydration guard (M11E): until React has attached its handlers the file
+  // input is disabled, so a choice can never be made against a control that
+  // would silently drop it. A selection that still reaches the DOM before
+  // hydration (e.g. set programmatically) is adopted in the effect below.
+  const [ready, setReady] = useState(false);
 
   const refresh = useCallback(async () => {
     const result = await fetchJobList();
@@ -83,6 +88,13 @@ export function OperationsConsole({ initialJobs, csrfToken, pollIntervalMs }: Op
     setFileError(candidate === null ? null : validateSelectedFile(candidate));
     setAnnouncement(candidate === null ? "File removed." : `Selected ${candidate.name}.`);
   };
+
+  useEffect(() => {
+    const early = inputRef.current?.files?.[0] ?? null;
+    if (early !== null) chooseFile(early);
+    setReady(true);
+    // Runs once, after hydration: `chooseFile` only uses state setters and refs.
+  }, []);
 
   const onInputChange = (event: ChangeEvent<HTMLInputElement>) => chooseFile(event.target.files?.[0] ?? null);
 
@@ -174,6 +186,7 @@ export function OperationsConsole({ initialJobs, csrfToken, pollIntervalMs }: Op
               id={inputId}
               className={styles.fileInput}
               type="file"
+              disabled={!ready}
               accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
               onChange={onInputChange}
               aria-invalid={fileError !== null}

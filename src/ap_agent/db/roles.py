@@ -35,7 +35,13 @@ __all__ = [
     "create_least_privilege_role",
     "grant_schema_access",
     "role_privilege_flags",
+    "RUNTIME_READ_ONLY_TABLES",
 ]
+
+# M11E: the identity-mapping tables are written only through the
+# administrative CLI (migration/admin DSN). The runtime/worker role may read
+# them to resolve an authenticated external identity, never change them.
+RUNTIME_READ_ONLY_TABLES = ("identity_organizations", "identity_mappings")
 
 _PRIVILEGE_FLAG_LABELS = ("superuser", "bypassrls", "createdb", "createrole")
 
@@ -222,6 +228,15 @@ def grant_schema_access(
                 f"ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} "
                 f"GRANT {privilege_list} ON TABLES TO {role_name};"
             )
+
+            for table in RUNTIME_READ_ONLY_TABLES:
+                cursor.execute("SELECT to_regclass(%s);", (f"{schema}.{table}",))
+                row = cursor.fetchone()
+
+                if row is not None and row[0] is not None:
+                    cursor.execute(
+                        f"REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON {schema}.{table} FROM {role_name};"
+                    )
 
 
 def role_privilege_flags(dsn: str, config: MemoryConfig, *, role_name: str) -> dict:

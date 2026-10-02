@@ -17,12 +17,13 @@ from ap_agent.exceptions import MigrationIntegrityError
 pytestmark = pytest.mark.unit
 
 
-def test_migration_order_is_0001_to_0004():
+def test_migration_order_is_0001_to_0005():
     assert ordered_migration_ids() == (
         "0001_memory_schema_bootstrap",
         "0002_operational_memory_tables",
         "0003_matched_invoice_memory",
         "0004_durable_operations",
+        "0005_identity_mappings",
     )
 
 

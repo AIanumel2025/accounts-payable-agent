@@ -29,3 +29,7 @@ dist/
 *.dump
 pgdata/
 postgres-data/
+
+# M11E: the worker image ships the MVP reference data (suppliers, purchase
+# orders, goods receipts) -- nothing else under tests/.
+!tests/fixtures/reference_data/

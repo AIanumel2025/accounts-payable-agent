@@ -19,6 +19,20 @@ from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
+from ap_agent.config.deployment import (
+    AuthMode,
+    ClerkConfig,
+    DeploymentEnvironment,
+    HostedConfigurationError,
+    S3StorageConfig,
+    StorageMode,
+    hosted_configuration_problems,
+    load_auth_mode,
+    load_clerk_config,
+    load_deployment_environment,
+    load_s3_config,
+    load_storage_mode,
+)
 from ap_agent.models.operations import UploadLimits
 
 __all__ = [
@@ -80,14 +94,39 @@ class ApiConfig:
     artifact_root: Optional[Path] = None
     upload_limits: UploadLimits = field(default_factory=UploadLimits)
 
+    # M11E: deployment environment, authentication mode and object storage.
+    # Defaults reproduce the M11A-M11D behaviour (development, prototype
+    # headers, local filesystem); `hosted` fails closed (see
+    # `ap_agent.config.deployment.hosted_configuration_problems`).
+    environment: DeploymentEnvironment = DeploymentEnvironment.DEVELOPMENT
+    auth_mode: AuthMode = AuthMode.PROTOTYPE_HEADERS
+    clerk: Optional[ClerkConfig] = None
+    storage_mode: StorageMode = StorageMode.LOCAL
+    s3: Optional[S3StorageConfig] = None
+
     def __post_init__(self) -> None:
         assert self.api_version.strip()
         assert self.api_prefix.startswith("/")
         assert self.request_timeout_seconds > 0
         assert "*" not in self.cors_allow_origins, "CORS origins must not include a wildcard."
-        assert not self.enable_operations or self.artifact_root is not None, (
-            "Enabling operations requires an artifact root."
+        if self.storage_mode is StorageMode.LOCAL:
+            assert not self.enable_operations or self.artifact_root is not None, (
+                "Enabling operations requires an artifact root."
+            )
+
+        problems = hosted_configuration_problems(
+            environment=self.environment,
+            auth_mode=self.auth_mode,
+            clerk=self.clerk,
+            storage_mode=self.storage_mode,
+            s3=self.s3,
+            artifact_root_configured=self.artifact_root is not None,
+            operations_enabled=self.enable_operations,
+            requires_storage=True,
         )
+
+        if problems:
+            raise HostedConfigurationError(problems)
 
 
 def load_api_config() -> ApiConfig:
@@ -110,7 +149,14 @@ def load_api_config() -> ApiConfig:
     )
     artifact_root_text = os.environ.get(ARTIFACT_ROOT_ENVIRONMENT_VARIABLE, "").strip()
 
+    storage_mode = load_storage_mode()
+
     return ApiConfig(
+        environment=load_deployment_environment(),
+        auth_mode=load_auth_mode(),
+        clerk=load_clerk_config(),
+        storage_mode=storage_mode,
+        s3=load_s3_config(),
         enable_operations=enable_operations,
         artifact_root=Path(artifact_root_text) if artifact_root_text else None,
         enable_review_command_writes=enable_writes,

@@ -33,6 +33,7 @@ OCR model (task §13).
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 
@@ -41,12 +42,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ap_agent.api.config import ApiConfig, load_api_config
 from ap_agent.api.errors import register_exception_handlers
-from ap_agent.api.routes import dashboard, health, operations, review_cases, review_commands
+from ap_agent.api.routes import dashboard, health, operations, review_cases, review_commands, session
 from ap_agent.api.upload_limits import RequestSizeLimitMiddleware
 from ap_agent.config.postgres import MemoryConfig
 from ap_agent.models.interface import InterfaceConfig, default_interface_config
 
 __all__ = ["create_app"]
+
+_LOGGER = logging.getLogger("ap_agent.api")
 
 
 @asynccontextmanager
@@ -76,6 +79,8 @@ def create_app(
     memory_config: Optional[MemoryConfig] = None,
     interface_config: Optional[InterfaceConfig] = None,
     api_config: Optional[ApiConfig] = None,
+    clerk_verifier: Optional[object] = None,
+    artifact_store: Optional[object] = None,
 ) -> FastAPI:
     """Build the Phase 9 review API. Every parameter is optional so the
     `uvicorn ap_agent.api.app:create_app --factory` launch command (task
@@ -93,6 +98,14 @@ def create_app(
         dsn = load_dsn(resolved_memory_config)
 
     resolved_api_config = api_config or load_api_config()
+
+    from ap_agent.config.deployment import DeploymentEnvironment, HostedConfigurationError, dsn_separation_problems
+
+    if resolved_api_config.environment is DeploymentEnvironment.HOSTED:
+        separation = dsn_separation_problems()
+
+        if separation:
+            raise HostedConfigurationError(separation)
     resolved_interface_config = interface_config or default_interface_config()
 
     app = FastAPI(
@@ -113,13 +126,36 @@ def create_app(
     app.state.api_config = resolved_api_config
     app.state.interface_config = resolved_interface_config
 
+    from ap_agent.auth.identity import IdentityRepository
+    from ap_agent.config.deployment import AuthMode
+
+    app.state.identity_repository = IdentityRepository(dsn, resolved_memory_config)
+
+    if resolved_api_config.auth_mode is AuthMode.CLERK_JWT:
+        # M11E: tokens are verified here, independently of Next.js.
+        from ap_agent.auth.clerk import ClerkTokenVerifier
+
+        assert resolved_api_config.clerk is not None
+        app.state.clerk_verifier = clerk_verifier or ClerkTokenVerifier(resolved_api_config.clerk)
+
     if resolved_api_config.enable_operations:
         # M11D Core: only built when operations are explicitly enabled. The
-        # artifact root is a server-side value; it is never returned.
-        from ap_agent.artifacts.storage import LocalFilesystemArtifactStore
+        # storage location and credentials are server-side values; they are
+        # never returned. M11E: local filesystem or S3-compatible (R2).
+        from ap_agent.artifacts.factory import build_artifact_store
 
-        assert resolved_api_config.artifact_root is not None
-        app.state.artifact_store = LocalFilesystemArtifactStore(resolved_api_config.artifact_root)
+        app.state.artifact_store = artifact_store or build_artifact_store(
+            resolved_api_config.storage_mode,
+            artifact_root=resolved_api_config.artifact_root,
+            s3=resolved_api_config.s3,
+        )
+
+    from ap_agent.config.deployment import describe_configuration_status
+
+    _LOGGER.info(
+        "API configuration status: %s",
+        ", ".join(f"{name}={value}" for name, value in sorted(describe_configuration_status().items())),
+    )
 
     app.add_middleware(
         RequestSizeLimitMiddleware,
@@ -138,6 +174,7 @@ def create_app(
     register_exception_handlers(app)
 
     app.include_router(health.router)
+    app.include_router(session.router)
     app.include_router(dashboard.router)
     app.include_router(review_cases.router)
     app.include_router(review_commands.router)

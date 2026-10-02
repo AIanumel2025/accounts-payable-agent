@@ -143,6 +143,15 @@ class HealthResponse(_StrictModel):
     operations_mode: Literal["ENABLED", "DISABLED"] = "DISABLED"
 
 
+class SessionResponse(_StrictModel):
+    """M11E: who the authenticated caller is, as the database mapping (not
+    the identity provider or the browser) defines it."""
+
+    role: Literal["TENANT_ADMIN", "AP_OPERATOR", "AP_REVIEWER", "READ_ONLY_AUDITOR"]
+    tenant_display_name: Optional[str] = None
+    auth_mode: Literal["prototype_headers", "clerk_jwt"]
+
+
 # ------------------------------------------------------------
 # Dashboard
 # ------------------------------------------------------------

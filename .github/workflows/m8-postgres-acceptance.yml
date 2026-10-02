@@ -63,7 +63,9 @@ jobs:
       github.head_ref == 'claude/m8-phase-7-postgres-memory' ||
       github.head_ref == 'claude/m9-phase-8-orchestration' ||
       github.head_ref == 'claude/sharp-brahmagupta-ec6k5e' ||
-      github.head_ref == 'claude/nice-faraday-m46tqu'
+      github.head_ref == 'claude/nice-faraday-m46tqu' ||
+      github.head_ref == 'claude/amazing-euler-546zxj' ||
+      github.head_ref == 'claude/m11e-hosted-mvp'
     runs-on: ubuntu-latest
     # Generous headroom for a cold run: paddlepaddle's wheel alone is
     # several hundred MB, and PP-OCRv6's detection/recognition/orientation/
@@ -133,7 +135,7 @@ jobs:
       - name: Install project, test, PostgreSQL, API and PaddleOCR dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,postgres,api,preprocessing,ocr-tesseract,ocr-paddle]"
+          pip install -e ".[dev,postgres,api,s3,preprocessing,ocr-tesseract,ocr-paddle]"
 
       # The `ocr-tesseract` extra above is only the `pytesseract` Python
       # binding; the fast/full suite's Tesseract-fallback pipeline tests
@@ -172,7 +174,7 @@ jobs:
       - name: Run Phase 9 (M10) API tests
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
-        run: pytest tests/api -vv --ignore-glob='tests/api/test_m11d_*'
+        run: pytest tests/api -vv --ignore-glob='tests/api/test_m11d_*' --ignore-glob='tests/api/test_m11e_*'
 
       # M10 task brief §17/§20: the repository/service-level real-PostgreSQL
       # suite (migrations already applied by the step above; this includes
@@ -185,7 +187,7 @@ jobs:
       - name: Run PostgreSQL acceptance suite
         env:
           AP_AGENT_TEST_POSTGRES_DSN: ${{ secrets.AP_AGENT_TEST_POSTGRES_DSN }}
-        run: pytest -m requires_postgres -vv --ignore-glob='tests/api/test_m11d_*'
+        run: pytest -m requires_postgres -vv --ignore-glob='tests/api/test_m11d_*' --ignore-glob='tests/api/test_m11e_*'
 
       # M9 task brief §20 step 9 / hotfix follow-up: with both real
       # providers now available in this job, run the complete, unfiltered

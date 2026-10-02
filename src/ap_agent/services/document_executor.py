@@ -14,6 +14,8 @@ memory service's deterministic, collision-checked writes apply.
 from __future__ import annotations
 
 import logging
+from contextlib import ExitStack
+from pathlib import Path
 from typing import Any, Callable, Optional
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -107,13 +109,27 @@ class DocumentJobExecutor:
     def execute(self, job: WorkflowJob) -> WorkflowJob:
         assert job.artifact_uri is not None and job.artifact_sha256 is not None and job.batch_id is not None
 
-        try:
-            path = self._artifact_store.open_verified(
-                job.artifact_uri, tenant_id=job.tenant_id, expected_sha256=job.artifact_sha256
-            )
-        except ArtifactIntegrityError as error:
-            return self._fail(job, safe_error_code(error.code), "The stored upload failed verification.")
+        # M11E: for object storage this downloads into a private temporary
+        # directory and removes it when the job finishes (success or failure);
+        # for the local store it verifies the file in place. Source invoices
+        # are never deleted by processing.
+        with ExitStack() as cleanup:
+            try:
+                path = cleanup.enter_context(
+                    self._artifact_store.verified_local_copy(
+                        job.artifact_uri,
+                        tenant_id=job.tenant_id,
+                        expected_sha256=job.artifact_sha256,
+                        filename=job.source_name,
+                        expected_size=job.byte_size,
+                    )
+                )
+            except ArtifactIntegrityError as error:
+                return self._fail(job, safe_error_code(error.code), "The stored upload failed verification.")
 
+            return self._run_verified(job, path)
+
+    def _run_verified(self, job: WorkflowJob, path: Path) -> WorkflowJob:
         self._operations.append_event(
             tenant_id=job.tenant_id, job_id=job.job_id, event_type="ARTIFACT_VERIFIED", status="RUNNING",
             attempt_number=1, message="Stored upload verified against its recorded SHA-256.",
