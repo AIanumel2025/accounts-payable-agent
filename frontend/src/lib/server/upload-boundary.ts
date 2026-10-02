@@ -5,6 +5,7 @@ import { loadOperationsMode, operationsModesAgree, type OperationsModeConfig } f
 import { loadServerEnvConfig, ServerConfigError, type ServerEnvConfig } from "@/lib/config/server-env";
 import { UUID_PATTERN, isRecord } from "@/lib/commands/contract";
 import { CSRF_HEADER, isSameOriginRequest, verifyCsrfToken } from "@/lib/server/csrf";
+import { upstreamFetch } from "@/lib/server/upstream";
 
 /**
  * The single, server-side upload boundary (M11D Core): the only browser
@@ -46,7 +47,7 @@ export function defaultUploadDeps(): UploadDeps {
   return {
     loadMode: () => loadOperationsMode(),
     loadEnv: () => loadServerEnvConfig(),
-    fetchImpl: (input, init) => fetch(input, init),
+    fetchImpl: (input, init) => upstreamFetch(String(input), init),
     now: () => new Date(),
     verifyCsrf: (token) => verifyCsrfToken(token, UPLOAD_CSRF_SCOPE),
     authHeaders: (config, now) => getBackendAuthHeaders(config, now),
@@ -60,12 +61,12 @@ export interface UploadResponse {
   body: unknown;
 }
 
-function failure(deps: UploadDeps, status: number, errors: string[], requestId?: string | null): UploadResponse {
+export function failure(deps: UploadDeps, status: number, errors: string[], requestId?: string | null): UploadResponse {
   return { status, body: { request_id: requestId ?? deps.newRequestId(), errors, generated_at: deps.now().toISOString() } };
 }
 
 /** Reads at most `limit` bytes; resolves `null` the moment the cap is exceeded. */
-async function readCappedBytes(request: Request, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
+export async function readCappedBytes(request: Request, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
   const declared = request.headers.get("content-length");
   if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > limit)) return null;
   if (request.body === null) return new Uint8Array(new ArrayBuffer(0));
@@ -92,7 +93,7 @@ async function readCappedBytes(request: Request, limit: number): Promise<Uint8Ar
   return out;
 }
 
-async function callUpstream(
+export async function callUpstream(
   deps: UploadDeps,
   url: string,
   init: RequestInit,
@@ -110,7 +111,7 @@ async function callUpstream(
   }
 }
 
-function safeErrorCodes(body: unknown): { errors: string[]; requestId: string | null } {
+export function safeErrorCodes(body: unknown): { errors: string[]; requestId: string | null } {
   if (!isRecord(body)) return { errors: [], requestId: null };
   const errors = Array.isArray(body.errors)
     ? body.errors.filter((code): code is string => typeof code === "string" && ERROR_CODE_PATTERN.test(code))

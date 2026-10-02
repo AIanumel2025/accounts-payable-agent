@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authFailureCode, getBackendAuthHeaders } from "@/lib/auth/backend-auth";
 import { loadServerEnvConfig, ServerConfigError } from "@/lib/config/server-env";
 import { loadOperationsMode } from "@/lib/config/operations-mode";
+import { upstreamFetch } from "@/lib/server/upstream";
 
 /**
  * Server-side API boundary the browser talks to (M11A task §5, extended
@@ -170,7 +171,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const upstreamResponse = await fetch(upstreamUrl, {
+    const upstreamResponse = await upstreamFetch(upstreamUrl, {
       method: "GET",
       headers,
       signal: controller.signal,

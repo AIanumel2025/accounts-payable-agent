@@ -33,3 +33,18 @@ export function loadOperationsMode(source: EnvSource = process.env): OperationsM
 export function operationsModesAgree(mode: FrontendOperationsMode, backendMode: string | null | undefined): boolean {
   return mode === "enabled" && backendMode === "ENABLED";
 }
+
+/**
+ * How invoice files reach storage (M11E.1). `multipart` (default; Render/R2): the browser posts the
+ * file to this server, which forwards it to FastAPI. `s3_direct` (AWS): Lambda cannot take a 10 MB
+ * request, so the browser asks this server for an upload intent, uploads straight to S3 with the
+ * short-lived presigned POST FastAPI issued, then asks this server to finalize.
+ */
+export const UPLOAD_MODE_VARIABLE = "AP_AGENT_FRONTEND_UPLOAD_MODE";
+
+export type FrontendUploadMode = "multipart" | "s3_direct";
+
+export function loadUploadMode(source: EnvSource = process.env): FrontendUploadMode {
+  const raw = (source[UPLOAD_MODE_VARIABLE] ?? "").trim().toLowerCase();
+  return raw === "s3_direct" ? "s3_direct" : "multipart"; // anything else keeps the existing, narrower behaviour
+}
