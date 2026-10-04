@@ -348,11 +348,23 @@ def test_a_child_that_already_finished_the_job_is_never_overwritten():
 
 
 def test_the_job_process_entry_point_refuses_bad_arguments_without_importing_ocr():
-    from ap_agent.worker import run_job
+    """Run in a FRESH interpreter: the pytest process may already have imported PaddleOCR through other tests,
+    so only a clean process can show what `run_job` itself loads."""
 
-    assert run_job.main([]) == run_job.EXIT_NOT_RUNNABLE
-    assert run_job.main(["not-a-uuid", "x"]) == run_job.EXIT_NOT_RUNNABLE
-    assert "paddle" not in sys.modules and "paddleocr" not in sys.modules
+    import subprocess
+
+    code = (
+        "import json, sys\n"
+        "from ap_agent.worker import run_job\n"
+        "results = [run_job.main([]), run_job.main(['not-a-uuid', 'x'])]\n"
+        "loaded = sorted(m for m in sys.modules if m.split('.')[0] in {'paddle', 'paddleocr', 'paddlex'})\n"
+        "print(json.dumps({'results': results, 'expected': run_job.EXIT_NOT_RUNNABLE, 'loaded': loaded}))\n"
+    )
+    completed = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    report = json.loads(completed.stdout.strip().splitlines()[-1])
+
+    assert report["results"] == [report["expected"], report["expected"]]
+    assert report["loaded"] == []
 
 
 def test_the_lambda_handler_module_imports_no_ocr_library():
