@@ -20,7 +20,7 @@ migration Lambda (no URL; invoked by an operator) ─► Neon (migration/owner r
 | AWS credentials | **AWS CloudShell** (recommended) or a workstation signed in with IAM Identity Center (`aws sso login`). Never create long-lived access keys. The identity needs permission to manage CloudFormation, Lambda, IAM roles, S3, SQS, SSM, ECR, CloudWatch and SNS in the account. |
 | Budget | The USD 20/month budget and its 50/80/100 % alerts already exist. **Do not create another.** |
 | Tools | `aws` v2, `docker`, `sam` (AWS SAM CLI), `jq`, `git`. CloudShell has `aws`, `docker` and `git`; install SAM and jq per section 3. |
-| Lambda concurrency quota | New accounts often start at **10**, which blocks any reserved concurrency (the worker reserves 1 and Lambda insists 10 stay unreserved). `preflight.sh` checks it; if it is below 11, request an increase in *Service Quotas → AWS Lambda → Concurrent executions* (code `L-B99A9384`, e.g. 100) and wait for approval. With a quota between 11 and 30, deploy with `WEB_API_RESERVED_CONCURRENCY=-1`. |
+| Lambda concurrency quota | **No increase needed.** Nothing is reserved by default: the single worker comes from the SQS FIFO design (one message group `ap-agent-jobs`, event-source batch size 1). Lambda requires an account to keep 100 units unreserved, so reserved concurrency would need a quota of at least 101 and is deliberately not used for the worker. The optional `WEB_API_RESERVED_CONCURRENCY=N` cap (default `-1` = off) needs a quota of at least 100 + 2N. |
 | Clerk | Application with **Organizations** on, user-created organizations **off**, sign-up **invitation-only**, the organization created and the pilot users invited (see `docs/m11e_deployment_runbook.md` §2). Note the **publishable key** (`pk_…`, public), the **secret key** (`sk_…`, secret) and the **issuer URL** (`https://<instance>.clerk.accounts.dev`). |
 | Neon | Existing project with two roles: a **migration/owner** role (direct endpoint DSN) and a **least-privilege runtime** role (`LOGIN`, no `SUPERUSER`, no `BYPASSRLS`; pooled endpoint DSN). Both with `sslmode=require`. They must be different roles. |
 | Disk for images | The worker image is several GB. CloudShell's Docker may run out of space: if `docker build` fails with "no space left", build on any machine with Docker and an AWS session instead (`build-and-push.sh` works unchanged anywhere). |
@@ -41,7 +41,7 @@ cd deploy/aws/scripts
 pip3 install --user aws-sam-cli && export PATH="$HOME/.local/bin:$PATH"     # if `sam` is missing
 sudo yum install -y jq 2>/dev/null || true                                  # if `jq` is missing
 export AWS_REGION=eu-west-2
-./preflight.sh        # masks the account id; checks region, tools, Lambda quota and which secrets exist
+./preflight.sh        # masks the account id; checks region, tools and which secrets exist, and prints the Lambda quota for information
 ```
 
 ## 4. Secrets (SSM Parameter Store, SecureString)
@@ -71,7 +71,7 @@ export CLERK_PUBLISHABLE_KEY='pk_...'                    # public by design
 export CLERK_ISSUER='https://<instance>.clerk.accounts.dev'
 export ALARM_EMAIL='you@example.com'                     # optional; SNS asks you to confirm
 # export WORKER_MEMORY_MB=8192                           # default (benchmarked); the Lambda maximum is 10240
-# export WEB_API_RESERVED_CONCURRENCY=-1                 # only if the quota is 11-30
+# export WEB_API_RESERVED_CONCURRENCY=10                 # OPTIONAL cap; default -1 (off); needs a quota of at least 100 + 2N
 
 ./build-and-push.sh      # creates the ECR stack (lifecycle: keep 3 images), builds + pushes 4 images
 ./deploy.sh pass1        # creates the application stack; prints the public FrontendUrl
@@ -251,6 +251,5 @@ Assumptions: 20 invoices/month, ~2 min of OCR each, ~1,000 page views/API calls.
 | Public Function URLs | USD 0 | |
 | **Total (AWS)** | **≈ USD 1–3** | Neon and Clerk are billed by their own plans (free tiers cover the MVP) |
 
-**Most likely to consume the budget:** (1) the OCR worker if volume grows or a retry loop runs (bounded: reserved
-concurrency 1, 3 receives then DLQ); (2) **ECR storage of the multi-GB worker image**; (3) CloudWatch alarms/logs;
+**Most likely to consume the budget:** (1) the OCR worker if volume grows or a retry loop runs (bounded: one FIFO message group means one job at a time; 3 receives then DLQ); (2) **ECR storage of the multi-GB worker image**; (3) CloudWatch alarms/logs;
 (4) data-transfer-out from Lambda to Neon (small). Nothing here is billed while idle except ECR storage and alarms.

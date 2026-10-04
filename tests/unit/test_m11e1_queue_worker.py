@@ -87,6 +87,9 @@ def test_sqs_dispatch_uses_one_fifo_group_and_a_deterministic_deduplication_id()
     dispatcher.dispatch(job)
     dispatcher.dispatch(job)
 
+    # Single worker: every job message uses the one shared FIFO message group (the template runs batch size 1).
+    assert MESSAGE_GROUP_ID == "ap-agent-jobs"
+    assert {m["MessageGroupId"] for m in client.sent} == {"ap-agent-jobs"}
     assert [m["MessageGroupId"] for m in client.sent] == [MESSAGE_GROUP_ID, MESSAGE_GROUP_ID]
     assert client.sent[0]["MessageDeduplicationId"] == client.sent[1]["MessageDeduplicationId"] == f"{job.job_id.hex}-1"
     assert "a.pdf" not in client.sent[0]["MessageBody"] and "object://" not in client.sent[0]["MessageBody"]

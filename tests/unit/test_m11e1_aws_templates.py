@@ -69,7 +69,9 @@ def test_the_api_url_must_stay_iam_protected_and_only_the_frontend_public():
 def test_worker_settings_are_pinned():
     assert any("Timeout" in p for p in _problems(lambda d: _fn(d, "WorkerFunction").update(Timeout=600)))
     assert any("BatchSize 1" in p for p in _problems(lambda d: _fn(d, "WorkerFunction")["Events"]["Jobs"]["Properties"].update(BatchSize=5)))
-    assert any("reserved concurrency" in p for p in _problems(lambda d: d["Parameters"]["WorkerReservedConcurrency"].update(MaxValue=5)))
+    assert any("reserved concurrency" in p for p in _problems(lambda d: _fn(d, "WorkerFunction").update(ReservedConcurrentExecutions=1)))
+    assert any("reserved concurrency" in p for p in _problems(lambda d: d["Parameters"].update(WorkerReservedConcurrency={"Type": "Number"})))
+    assert any("disabled by default" in p for p in _problems(lambda d: d["Parameters"]["WebAndApiReservedConcurrency"].update(Default=10)))
     assert any("4096" in p for p in _problems(lambda d: d["Parameters"]["WorkerMemoryMb"].update(Default=2048)))
 
 
@@ -154,3 +156,20 @@ def test_logs_tags_outputs_and_alarms_are_required():
 
 def test_image_uris_come_from_parameters():
     assert any("ImageUri" in p for p in _problems(lambda d: _fn(d, "WebFunction").update(ImageUri="123.dkr.ecr/x:1")))
+
+
+def test_the_worker_has_no_reserved_concurrency_and_stays_single_through_the_fifo_design():
+    document = verifier.load_template(TEMPLATE)
+    worker = document["Resources"]["WorkerFunction"]["Properties"]
+    event = worker["Events"]["Jobs"]["Properties"]
+
+    assert "ReservedConcurrentExecutions" not in worker and "WorkerReservedConcurrency" not in document["Parameters"]
+    assert event["BatchSize"] == 1 and "MaximumBatchingWindowInSeconds" not in event
+    assert "ScalingConfig" not in event  # no raised event-source concurrency
+    assert document["Resources"]["JobsQueue"]["Properties"]["FifoQueue"] is True
+    # The optional web/API cap is off unless asked for, and must stay a valid -1.
+    web_api = document["Parameters"]["WebAndApiReservedConcurrency"]
+    assert web_api["Default"] == -1 and web_api["MinValue"] == -1
+    assert "ReserveWebAndApiConcurrency" in document["Conditions"]
+    for name in ("ApiFunction", "WebFunction"):
+        assert "If" in str(document["Resources"][name]["Properties"]["ReservedConcurrentExecutions"])

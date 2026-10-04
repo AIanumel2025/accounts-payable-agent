@@ -11,14 +11,9 @@ echo "Environment: $ENVIRONMENT   Stacks: $ECR_STACK, $APP_STACK"
 
 LIMIT="$(aws lambda get-account-settings --query 'AccountLimit.ConcurrentExecutions' --output text)"
 echo "Lambda concurrent-executions quota: $LIMIT"
-if [ "$LIMIT" -lt 11 ]; then
-  echo "BLOCKER: the worker reserves 1 execution and Lambda requires 10 to stay unreserved, so the quota must be at least 11."
-  echo "  Request an increase (Service Quotas -> AWS Lambda -> Concurrent executions, code L-B99A9384), e.g. to 100, then re-run."
-  exit 2
-fi
-if [ "$LIMIT" -lt 31 ]; then
-  echo "note: quota < 31, so deploy with WEB_API_RESERVED_CONCURRENCY=-1 (frontend/API unreserved; the worker is still limited to 1)."
-fi
+echo "No quota increase is needed: nothing is reserved by default (the single worker comes from the FIFO message group + batch size 1)."
+echo "note: Lambda keeps 100 units of concurrency unreserved. The OPTIONAL WEB_API_RESERVED_CONCURRENCY=N (default -1, off)"
+echo "      needs a quota of at least 100 + 2N; this account's quota is $LIMIT."
 
 for name in postgres-runtime-dsn postgres-migration-dsn clerk-secret-key frontend-csrf-secret; do
   if aws ssm get-parameter --name "$SSM_PREFIX/$name" --query 'Parameter.Type' --output text >/dev/null 2>&1; then

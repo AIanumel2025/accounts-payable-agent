@@ -34,7 +34,7 @@ browser ── HTTPS ──► web Lambda  (Next.js 16 standalone + Lambda Web A
    │                    │  └── SQS FIFO  ── send {job_id, tenant_id, dispatch_generation}
    └── presigned POST ──► private S3 bucket          │
                                                      ▼
-                              worker Lambda (SQS trigger, batch 1, reserved concurrency 1, 900 s)
+                              worker Lambda (SQS trigger, batch 1, one FIFO message group, 900 s)
                                  └─ per job: claim (QUEUED→RUNNING) → fresh child process → real PaddleOCR → Neon / S3 (read-only)
 migration Lambda (no URL, no trigger; invoked by an operator) ── migration/owner DSN ── Neon
 DLQ (FIFO) ◄── redrive after 3 receives
@@ -84,7 +84,7 @@ Required outputs: `FrontendUrl`, `ApiUrl`, `UploadBucketName`, `QueueUrl`, `Work
 
 None of: NAT Gateway, load balancer, always-on EC2/ECS, RDS, provisioned concurrency, OpenSearch, ElastiCache, Route 53,
 custom domain, VPC, API Gateway, CloudFront, DynamoDB — enforced by `verify_aws_templates.py` (+ mutation tests). Used:
-scale-to-zero Lambda, reserved-concurrency bounds (worker 1; web and API 10 each, optional), 14-day logs, S3 lifecycle
+scale-to-zero Lambda, optional web/API reserved-concurrency caps (off by default), 14-day logs, S3 lifecycle
 rules, ECR lifecycle rules, API connection pool disabled (no idle Neon connections), 6 alarms, one SNS topic.
 
 Estimated low-volume cost: **≈ USD 1–3 / month** for AWS (details and the components most likely to consume the USD 20
@@ -207,7 +207,7 @@ set in §2 and the URL is the `FrontendUrl` output.
 ## 10. Remaining hosted checks and the single hand-off
 
 All 18 checks above marked *pending* remain. Everything needed is in `docs/m11e1_aws_deployment_runbook.md`; in short:
-(1) AWS CloudShell/SSO session + Lambda concurrency quota ≥ 11; (2) `create-secrets.sh` (Neon runtime DSN, Neon migration
+(1) AWS CloudShell/SSO session (no Lambda quota increase is needed); (2) `create-secrets.sh` (Neon runtime DSN, Neon migration
 DSN, Clerk secret key — hidden prompts); (3) `build-and-push.sh`; (4) `deploy.sh pass1`; (5) `invoke-migration.sh migrate`;
 (6) `invoke-migration.sh identity register-tenant / register …`; (7) `deploy.sh pass2`; (8) `smoke.sh`, then the
 authenticated checks with an invited Clerk test user and a real invoice; (9) read the benchmark from the PR checks and
@@ -228,9 +228,12 @@ adjust `WORKER_MEMORY_MB` if it differs.
   a duplicate that the idempotent claim ignores).
 * **D-6** A job interrupted by a dead invocation is **failed, not re-run** (`WORKER_INTERRUPTED`); with the isolated child
   process the common causes (OOM, timeout) are recorded immediately as `WORKER_PROCESS_FAILED` / `WORKER_TIMEOUT`.
-* **D-7** Web/API reserved concurrency is a parameter (`-1` = unreserved) because new accounts commonly have a Lambda
-  concurrency quota of 10, which forbids any reservation; the worker's reservation of 1 needs a quota ≥ 11. FIFO ordering
-  with one message group already serialises the worker.
+* **D-7** The worker has **no reserved concurrency**: Lambda requires an account to keep 100 units unreserved, so
+  reserving even one would need a quota of at least 101 (an earlier draft of this PR wrongly said 11). Single-worker
+  execution comes from the FIFO design instead: all job messages use the one message group `ap-agent-jobs`, the
+  event-source batch size is 1 and no scaling cap is raised, so SQS never has two messages of the group in flight; the
+  atomic `QUEUED → RUNNING` claim is the second guard. Web/API reserved concurrency is optional and **off by default**
+  (`WebAndApiReservedConcurrency=-1`); setting N needs a quota of at least 100 + 2N.
 * **D-8** The Lambda readiness check uses `/icon.svg` (a static asset) rather than `/sign-in`, which depends on Clerk.
 * **D-9** The presigned POST does not use S3's optional `x-amz-checksum-*` form fields; the SHA-256 is verified at finalize
   on a private copy of the stored bytes (the authoritative check).
@@ -252,8 +255,7 @@ adjust `WORKER_MEMORY_MB` if it differs.
    initialisation (~3–12 s) per job by design; Neon scale-to-zero adds its own wake-up latency.
 4. **Clerk behind the adapter**: redirects rely on `x-forwarded-proto: https` from the Function URL; verify the sign-in
    redirect lands on `https://`.
-5. **Quota**: Lambda concurrency quota below 11 blocks the deployment until raised (preflight reports it).
-6. **Fallback path limits**: a crashed Fargate task leaves its job `RUNNING` (Pipes already deleted the message).
+5. **Quota**: none needed to deploy. The optional web/API reservation (off by default) needs a quota of at least 100 + 2N; Lambda rejects it otherwise.
 7. **Single shared SNS email subscription** must be confirmed by the recipient.
 8. The MVP reference data (`tests/fixtures/reference_data`) is bundled into the worker image (D-5 of M11E) — replace it
    with real master data before real use.

@@ -131,11 +131,15 @@ def verify_application_template(template: dict[str, Any], *, raw_text: str = "")
     if worker.get("Timeout") != 900:
         problems.append("WorkerFunction: Timeout must be 900")
 
-    if worker.get("ReservedConcurrentExecutions") != {"Ref": "WorkerReservedConcurrency"} or (
-        parameters.get("WorkerReservedConcurrency", {}).get("Default") != 1
-        or parameters["WorkerReservedConcurrency"].get("MaxValue") != 1
-    ):
-        problems.append("WorkerFunction: reserved concurrency must be exactly 1")
+    # No worker reservation: it would need an account quota of at least 101. Single-worker execution comes from the
+    # FIFO design (one message group, batch size 1), checked below and in test_m11e1_queue_worker.py.
+    if "ReservedConcurrentExecutions" in worker or "WorkerReservedConcurrency" in parameters:
+        problems.append("WorkerFunction: must not use reserved concurrency (needs a quota of at least 101)")
+
+    web_api = parameters.get("WebAndApiReservedConcurrency", {})
+
+    if web_api.get("Default") != -1 or web_api.get("MinValue") != -1:
+        problems.append("WebAndApiReservedConcurrency: optional and disabled by default (-1)")
 
     if parameters.get("WorkerMemoryMb", {}).get("Default", 0) < 4096:
         problems.append("WorkerFunction: memory must default to at least 4096 MB")

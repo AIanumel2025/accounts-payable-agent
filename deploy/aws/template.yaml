@@ -70,22 +70,16 @@ Parameters:
     MinValue: 1024
     MaxValue: 10240
     Description: Scratch space (/tmp) for the downloaded invoice and rendered page images.
-  WorkerReservedConcurrency:
-    Type: Number
-    Default: 1
-    MinValue: 1
-    MaxValue: 1
-    Description: >-
-      Exactly one worker invocation at a time. Reserving concurrency requires the account's Lambda concurrency quota
-      to stay at least 10 unreserved; new accounts often start at 10 -- see the runbook preflight.
   WebAndApiReservedConcurrency:
     Type: Number
-    Default: 10
+    Default: -1
     MinValue: -1
     MaxValue: 100
     Description: >-
-      Upper bound on concurrent executions for each of the frontend and the API (bounds Neon connections and cost).
-      -1 leaves them unreserved (needed while the account's Lambda concurrency quota is below 31; see the runbook preflight).
+      OPTIONAL cap on concurrent executions for each of the frontend and the API (bounds Neon connections and cost).
+      -1 (the default) reserves nothing, so no quota increase is needed to deploy. Lambda requires an account to keep
+      100 units of unreserved concurrency, so setting a value N is only possible when the account's concurrency quota is
+      at least 100 + 2 x N (e.g. 120 for N=10); Lambda rejects the deployment otherwise.
   LogRetentionDays:
     Type: Number
     Default: 14
@@ -464,12 +458,15 @@ Resources:
       Timeout: 900
       EphemeralStorage:
         Size: !Ref WorkerEphemeralStorageMb
-      ReservedConcurrentExecutions: !Ref WorkerReservedConcurrency
       Environment:
         Variables:
           AP_AGENT_S3_BUCKET: !Sub "ap-agent-${Environment}-uploads-${AWS::AccountId}-${AWS::Region}"
           AP_AGENT_S3_REGION: !Ref AWS::Region
           AP_AGENT_SSM_PARAMETERS: !Sub "AP_AGENT_POSTGRES_DSN=${SsmPrefix}/postgres-runtime-dsn"
+      # Single worker WITHOUT reserved concurrency (which would need an account quota of at least 101): every job
+      # message uses the one FIFO message group `ap-agent-jobs` (ap_agent.services.job_dispatch.MESSAGE_GROUP_ID), and
+      # SQS never delivers a second message of a group while one is in flight, so with BatchSize 1 at most one
+      # invocation processes a job at a time. The atomic QUEUED->RUNNING claim is the second guard.
       Events:
         Jobs:
           Type: SQS

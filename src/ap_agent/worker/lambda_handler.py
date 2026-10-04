@@ -1,6 +1,6 @@
 """Queue-driven (AWS Lambda) invoice worker (M11E.1).
 
-    SQS FIFO -> Lambda (batch size 1, reserved concurrency 1) -> this handler
+    SQS FIFO (one message group) -> Lambda (batch size 1) -> this handler
 
 The queue only wakes the worker; PostgreSQL stays the source of truth. For each
 message the handler
