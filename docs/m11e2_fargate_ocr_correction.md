@@ -97,7 +97,18 @@ unavailable, 6 unusable message, 7 transient, 8 deadline.
 
 ## 5. Tests and exact results
 
-RESULTS_PLACEHOLDER
+| Check | Result |
+|---|---|
+| Full backend suite (`pytest -m "not requires_paddle" --ignore=tests/unit/test_paddleocr_adapter.py`, local PostgreSQL 16 with TLS) | **1549 passed**, 31 deselected, 0 failed (244 s) |
+| `tests/unit/test_m11e2_fargate_dispatcher.py` (mocked ECS/SQS, task entry point) | 57 passed |
+| `tests/unit/test_m11e2_deploy_scripts.py` (stub aws/sam/docker) | 38 passed |
+| `tests/unit/test_m11e1_aws_templates.py` (policy mutation tests) | 32 passed |
+| `cfn-lint` 1.57.1 on `template.yaml`, `ecr.yaml` | clean |
+| `sam validate --lint` (placeholder credentials, no AWS call) | valid |
+| `scripts/verify_aws_templates.py` and `--lambda-memory-limit` | OK |
+| `bash -n` on every deploy script; account-id/DSN/secret grep over `deploy/aws` | clean |
+| Frontend | untouched; not re-run |
+| CI on the final head | see the PR checks (recorded in the PR, not here) |
 
 ## 6. Cost
 
