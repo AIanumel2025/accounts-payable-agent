@@ -2,24 +2,23 @@
 """Representative worker benchmark with the REAL PaddleOCR provider (M11E.1).
 
 Answers one question for the AWS deployment: can the OCR worker finish a representative invoice comfortably inside
-AWS Lambda's 15-minute limit (target: no more than 12 minutes)? It runs the production worker path -- the same
-claim -> fresh job process (`python -m ap_agent.worker.run_job`) -> `DocumentJobExecutor` -> PaddleOCR engine that the
-Lambda handler uses -- against a real PostgreSQL database, one queued upload job per invoice, and reports:
+the dispatcher's 15-minute bound (target: no more than 12 minutes) on the Fargate task's 4 vCPU / 8 GB? It runs the
+production worker path -- the same claim -> fresh job process (`python -m ap_agent.worker.run_job`) ->
+`DocumentJobExecutor` -> PaddleOCR engine that the Fargate task (`ap_agent.worker.dispatch_task`) uses -- against a real PostgreSQL database, one queued upload job per invoice, and reports:
 
   * per-document wall-clock time (INCLUDING the engine initialisation each job process pays), outcome and exit status,
-  * the peak resident memory of each job process (the number that must fit the Lambda memory size).
+  * the peak resident memory of each job process (the number that must fit the 8 GB task memory).
 
 It exits non-zero if any document exceeds `--max-seconds` (default 720 = 12 minutes), if the engine falls back from
 PaddleOCR, or if a job ends FAILED. Nothing is substituted: a PaddleOCR failure is a failure, never a Tesseract pass.
 
-Run it inside the worker image under a CPU/memory ceiling that approximates the Lambda size under test (Lambda grants
-roughly 1 vCPU per 1,769 MB: 8192 MB ~ 4.6 vCPU), e.g. in CI:
+Run it inside the worker image under the Fargate task's CPU/memory (4 vCPU / 8192 MB), e.g. in CI:
 
     docker run --cpus 4 --memory 8192m --network host --entrypoint python <worker-image> scripts/benchmark_worker.py
 
 Environment: AP_AGENT_POSTGRES_DSN (runtime role), AP_AGENT_POSTGRES_MIGRATION_DSN (migrations + tenant registration),
 AP_AGENT_REFERENCE_DATA_DIRECTORY. The database must be disposable. Uploads use a local scratch artifact root: the
-Lambda S3 path only downloads the object first and is covered by the storage tests.
+S3 path only downloads the object first and is covered by the storage tests.
 """
 
 from __future__ import annotations

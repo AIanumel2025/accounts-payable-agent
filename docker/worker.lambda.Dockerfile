@@ -1,4 +1,7 @@
-# Invoice worker as an AWS Lambda container image (M11E.1), triggered by SQS FIFO.
+# Invoice worker container image (M11E.1; the file keeps its Lambda-era name). Since M11E.2 it is NOT run as a Lambda
+# function (the AWS account caps Lambda memory at 3,008 MB): it is the container of the on-demand ECS Fargate task
+# `OcrTaskDefinition` (4 vCPU / 8 GB), which overrides the ENTRYPOINT with `python -m ap_agent.worker.dispatch_task`.
+# The Lambda runtime client and handler below are kept so the same image still works as a Lambda for local experiments.
 #
 # Same application code, dependency pins (paddlepaddle 3.3.1 / paddleocr 3.7.0 / pymupdf 1.28.2) and Debian
 # python:3.11 base as docker/worker.Dockerfile -- i.e. the OCR runtime the validated pipeline already uses --
@@ -9,8 +12,8 @@
 # at run time: a cold start never depends on a model host being reachable. HOME and every cache directory are
 # redirected to /tmp (the only writable path on Lambda). Real PaddleOCR only; no substitution.
 #
-# Memory/CPU: Lambda allocates CPU in proportion to memory (~1 vCPU per 1,769 MB). The benchmark measured per-job
-# peak resident sets of 1.1-6.8 GB, so the deployment default is 8192 MB (~4.6 vCPU); see docs/m11e1_aws_go_live_report.md.
+# Memory/CPU: the benchmark measured per-job peak resident sets of 1.1-6.8 GB, so the Fargate task is 4 vCPU / 8 GB
+# (docs/m11e1_aws_go_live_report.md, docs/m11e2_fargate_ocr_correction.md).
 #
 # Build:  docker build -f docker/worker.lambda.Dockerfile -t ap-agent-worker-lambda .
 

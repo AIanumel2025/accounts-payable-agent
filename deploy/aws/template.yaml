@@ -1,10 +1,13 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  Accounts payable agent -- cost-optimised serverless AWS deployment (M11E.1).
+  Accounts payable agent -- cost-optimised AWS deployment (M11E.1, corrected by M11E.2).
   Public Next.js frontend (Lambda + Function URL), IAM-protected FastAPI (Lambda + AWS_IAM Function URL),
-  SQS FIFO-triggered PaddleOCR worker, private S3 invoice bucket and a non-public migration task.
-  PostgreSQL stays on Neon, Clerk stays the identity provider. No VPC, NAT, load balancer, RDS or always-on compute.
+  SQS FIFO queue -> small dispatcher Lambda -> ONE on-demand ECS Fargate task (4 vCPU / 8 GB) per invoice running the
+  PaddleOCR worker, private S3 invoice bucket and a non-public migration task. The heavy OCR does not run in Lambda:
+  this account caps Lambda memory at 3,008 MB. PostgreSQL stays on Neon, Clerk stays the identity provider.
+  No NAT gateway, load balancer, RDS, ECS service or always-on compute; the only network is a public-subnet VPC whose
+  task security group has no inbound rule.
 
 # Two-pass deployment: the frontend's own URL does not exist until the stack does, and FastAPI / S3 CORS need it.
 # Pass 1 leaves FrontendOrigin empty (API fails closed: no Clerk authorized party), pass 2 sets it.
@@ -18,16 +21,23 @@ Parameters:
     Description: Environment name; used in resource names and the Environment tag.
   WebImageUri:
     Type: String
-    Description: ECR image URI of the frontend (docker/web.lambda.Dockerfile).
+    AllowedPattern: "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+(:[A-Za-z0-9._-]+|@sha256:[a-f0-9]{64})$"
+    Description: ECR image URI of the frontend (docker/web.lambda.Dockerfile). Explicit tag or @sha256 digest.
   ApiImageUri:
     Type: String
-    Description: ECR image URI of the API (docker/api.lambda.Dockerfile).
+    AllowedPattern: "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+(:[A-Za-z0-9._-]+|@sha256:[a-f0-9]{64})$"
+    Description: ECR image URI of the API (docker/api.lambda.Dockerfile). Explicit tag or @sha256 digest.
   WorkerImageUri:
     Type: String
-    Description: ECR image URI of the OCR worker (docker/worker.lambda.Dockerfile).
+    AllowedPattern: "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+(:[A-Za-z0-9._-]+|@sha256:[a-f0-9]{64})$"
+    Description: >-
+      ECR image URI of the OCR worker (docker/worker.lambda.Dockerfile), run as an ECS Fargate task -- not as a Lambda.
+      Explicit tag or @sha256 digest. It must live in the repository ap-agent-<Environment>/worker (the task execution
+      role may pull only from there).
   MigrateImageUri:
     Type: String
-    Description: ECR image URI of the migration task (docker/migrate.lambda.Dockerfile).
+    AllowedPattern: "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+(:[A-Za-z0-9._-]+|@sha256:[a-f0-9]{64})$"
+    Description: ECR image URI of the migration task (docker/migrate.lambda.Dockerfile); also the image of the dispatcher Lambda. Explicit tag or @sha256 digest.
   SsmPrefix:
     Type: String
     Default: /ap-agent/production
@@ -55,21 +65,14 @@ Parameters:
     Default: ap_agent_app
     AllowedPattern: "^[a-z_][a-z0-9_]{0,62}$"
     Description: Name of the least-privilege runtime database role the migration task grants schema access to (not a secret).
-  WorkerMemoryMb:
+  OcrTaskMaxSeconds:
     Type: Number
-    Default: 8192
-    MinValue: 4096
-    MaxValue: 10240
+    Default: 720
+    MinValue: 120
+    MaxValue: 780
     Description: >-
-      Worker memory (Lambda CPU scales with memory: ~1 vCPU per 1,769 MB). 4096 MB was the starting point; the benchmark
-      measured per-job peak resident sets of 1.1-6.8 GB (the largest on a 15 KB PDF), so the default is 8192 MB
-      (docs/m11e1_aws_go_live_report.md). The Lambda maximum is 10240 MB.
-  WorkerEphemeralStorageMb:
-    Type: Number
-    Default: 3072
-    MinValue: 1024
-    MaxValue: 10240
-    Description: Scratch space (/tmp) for the downloaded invoice and rendered page images.
+      Hard deadline (seconds, measured inside the container) after which an OCR task exits with code 8. It plus the image
+      pull must fit inside the dispatcher Lambda's 900 s; the benchmark gate is 720 s (12 minutes) per invoice.
   WebAndApiReservedConcurrency:
     Type: Number
     Default: -1
@@ -184,7 +187,8 @@ Resources:
       QueueName: !Sub "ap-agent-${Environment}-jobs.fifo"
       FifoQueue: true
       ContentBasedDeduplication: false
-      # Worker timeout is 900 s; the visibility timeout must be at least six times that (5400 s).
+      # The dispatcher Lambda waits for the Fargate task inside its 900 s timeout; the visibility timeout must be at least
+      # six times that (5400 s). The dispatcher shortens it for failed messages so a one-group FIFO queue is not blocked.
       VisibilityTimeout: 5400
       MessageRetentionPeriod: 345600
       SqsManagedSseEnabled: true
@@ -223,10 +227,15 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/ap-agent-${Environment}-api"
       RetentionInDays: !Ref LogRetentionDays
-  WorkerLogGroup:
+  DispatcherLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/lambda/ap-agent-${Environment}-worker"
+      LogGroupName: !Sub "/aws/lambda/ap-agent-${Environment}-dispatcher"
+      RetentionInDays: !Ref LogRetentionDays
+  OcrLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/ap-agent-${Environment}-ocr"
       RetentionInDays: !Ref LogRetentionDays
   MigrateLogGroup:
     Type: AWS::Logs::LogGroup
@@ -311,7 +320,8 @@ Resources:
         - { Key: Environment, Value: !Ref Environment }
         - { Key: ManagedBy, Value: cloudformation }
 
-  WorkerRole:
+  # The Lambda that starts ONE Fargate task per queue message and waits for it. Holds no application secret and no S3 access.
+  DispatcherRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -319,19 +329,105 @@ Resources:
         Statement:
           - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: "sts:AssumeRole" }
       Policies:
-        - PolicyName: worker
+        - PolicyName: dispatcher
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Sid: Logs
                 Effect: Allow
                 Action: ["logs:CreateLogStream", "logs:PutLogEvents"]
-                Resource: !Sub "${WorkerLogGroup.Arn}:*"
+                Resource: !Sub "${DispatcherLogGroup.Arn}:*"
+              # Only this application's OCR task definition (any revision), and only into this cluster.
+              - Sid: RunOcrTask
+                Effect: Allow
+                Action: "ecs:RunTask"
+                Resource: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/ap-agent-${Environment}-ocr:*"
+                Condition:
+                  ArnEquals:
+                    "ecs:cluster": !GetAtt OcrCluster.Arn
+              # Poll and stop the tasks of this cluster only.
+              - Sid: ObserveAndStopOcrTasks
+                Effect: Allow
+                Action: ["ecs:DescribeTasks", "ecs:StopTask"]
+                Resource: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${OcrCluster}/*"
+              # RunTask hands the two task roles to ECS; nothing else may be passed, and only to ECS tasks.
+              - Sid: PassTaskRoles
+                Effect: Allow
+                Action: "iam:PassRole"
+                Resource:
+                  - !GetAtt OcrExecutionRole.Arn
+                  - !GetAtt OcrTaskRole.Arn
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": ecs-tasks.amazonaws.com
+              # The event-source mapping (consume) plus the visibility back-off for failed messages.
+              - Sid: ConsumeQueue
+                Effect: Allow
+                Action: ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"]
+                Resource: !GetAtt JobsQueue.Arn
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  # Pulls the worker image and writes the task's logs. Deliberately has NO access to secrets.
+  OcrExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: ocr-execution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # The authorization token is not resource-scoped by AWS.
+              - Sid: EcrLogin
+                Effect: Allow
+                Action: "ecr:GetAuthorizationToken"
+                Resource: "*"
+              - Sid: PullWorkerImage
+                Effect: Allow
+                Action: ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"]
+                Resource: !Sub "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/ap-agent-${Environment}/worker"
+              - Sid: Logs
+                Effect: Allow
+                Action: ["logs:CreateLogStream", "logs:PutLogEvents"]
+                Resource: !Sub "${OcrLogGroup.Arn}:*"
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  # What the OCR process itself may do: read its database DSN, read invoices. It never writes or deletes source invoices.
+  OcrTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+      Policies:
+        - PolicyName: ocr-task
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
               - Sid: Secrets
                 Effect: Allow
                 Action: "ssm:GetParameter"
                 Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/postgres-runtime-dsn"
-              # Read-only: processing never writes or deletes source invoices.
               - Sid: ReadInvoices
                 Effect: Allow
                 Action: "s3:GetObject"
@@ -340,10 +436,6 @@ Resources:
                 Effect: Allow
                 Action: "s3:ListBucket"
                 Resource: !GetAtt UploadBucket.Arn
-              - Sid: ConsumeQueue
-                Effect: Allow
-                Action: ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"]
-                Resource: !GetAtt JobsQueue.Arn
       Tags:
         - { Key: Project, Value: accounts-payable-agent }
         - { Key: Environment, Value: !Ref Environment }
@@ -446,27 +538,181 @@ Resources:
       Principal: "*"
       InvokedViaFunctionUrl: true
 
-  WorkerFunction:
-    Type: AWS::Serverless::Function
-    DependsOn: WorkerLogGroup
+  # ------------------------------------------------------------------ network for the on-demand OCR task
+  # Public subnets + an internet gateway and NO NAT gateway: the task gets a public IP only while it runs (the dispatcher
+  # sets assignPublicIp ENABLED) to reach ECR, S3, SSM and Neon over TLS. Its security group has no inbound rule at all.
+  OcrVpc:
+    Type: AWS::EC2::VPC
     Properties:
-      FunctionName: !Sub "ap-agent-${Environment}-worker"
-      PackageType: Image
-      ImageUri: !Ref WorkerImageUri
-      Role: !GetAtt WorkerRole.Arn
-      MemorySize: !Ref WorkerMemoryMb
-      Timeout: 900
+      CidrBlock: 10.42.0.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - { Key: Name, Value: !Sub "ap-agent-${Environment}-ocr" }
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  OcrInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  OcrGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref OcrVpc
+      InternetGatewayId: !Ref OcrInternetGateway
+
+  OcrRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref OcrVpc
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  OcrDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: OcrGatewayAttachment
+    Properties:
+      RouteTableId: !Ref OcrRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref OcrInternetGateway
+
+  OcrSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref OcrVpc
+      CidrBlock: 10.42.0.0/25
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  OcrSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref OcrVpc
+      CidrBlock: 10.42.0.128/25
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  OcrSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref OcrSubnetA
+      RouteTableId: !Ref OcrRouteTable
+
+  OcrSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref OcrSubnetB
+      RouteTableId: !Ref OcrRouteTable
+
+  OcrSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: OCR Fargate task - no inbound traffic; outbound HTTPS (ECR, S3, SSM) and PostgreSQL (Neon) only.
+      VpcId: !Ref OcrVpc
+      # No SecurityGroupIngress: nothing can connect to the task.
+      SecurityGroupEgress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: "HTTPS to ECR, S3, SSM and Neon" }
+        - { IpProtocol: tcp, FromPort: 5432, ToPort: 5432, CidrIp: 0.0.0.0/0, Description: "PostgreSQL (Neon)" }
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  # ------------------------------------------------------------------ on-demand OCR (ECS Fargate)
+  # A cluster is a free logical grouping. There is deliberately NO AWS::ECS::Service: a task exists only while it works.
+  OcrCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "ap-agent-${Environment}"
+      ClusterSettings:
+        - { Name: containerInsights, Value: disabled }
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  OcrTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "ap-agent-${Environment}-ocr"
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      # 4 vCPU / 8 GB: the verified benchmark envelope (docker run --cpus 4 --memory 8192m; per-job peak RSS up to ~6.6-6.8 GB).
+      Cpu: "4096"
+      Memory: "8192"
       EphemeralStorage:
-        Size: !Ref WorkerEphemeralStorageMb
+        SizeInGiB: 30
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      ExecutionRoleArn: !GetAtt OcrExecutionRole.Arn
+      TaskRoleArn: !GetAtt OcrTaskRole.Arn
+      ContainerDefinitions:
+        - Name: worker
+          Image: !Ref WorkerImageUri
+          Essential: true
+          # The image's ENTRYPOINT is the Lambda runtime client; the task runs one job and exits instead.
+          EntryPoint: [python, -m]
+          Command: [ap_agent.worker.dispatch_task]
+          Environment:
+            - { Name: AWS_REGION, Value: !Ref AWS::Region }
+            - { Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region }
+            - { Name: AP_AGENT_S3_BUCKET, Value: !Sub "ap-agent-${Environment}-uploads-${AWS::AccountId}-${AWS::Region}" }
+            - { Name: AP_AGENT_S3_REGION, Value: !Ref AWS::Region }
+            - { Name: AP_AGENT_SSM_PARAMETERS, Value: !Sub "AP_AGENT_POSTGRES_DSN=${SsmPrefix}/postgres-runtime-dsn" }
+            - { Name: AP_AGENT_TASK_MAX_SECONDS, Value: !Ref OcrTaskMaxSeconds }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref OcrLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ocr
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  # Starts exactly one task per message and returns only after the task STOPPED with exit code 0.
+  # Same image as the migration task (it needs no OCR library, only boto3 and the application's dispatch contract).
+  DispatcherFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: DispatcherLogGroup
+    Properties:
+      FunctionName: !Sub "ap-agent-${Environment}-dispatcher"
+      PackageType: Image
+      ImageUri: !Ref MigrateImageUri
+      ImageConfig:
+        Command: [ap_agent.aws.fargate_dispatcher.handler]
+      Role: !GetAtt DispatcherRole.Arn
+      MemorySize: 256
+      Timeout: 900
       Environment:
         Variables:
-          AP_AGENT_S3_BUCKET: !Sub "ap-agent-${Environment}-uploads-${AWS::AccountId}-${AWS::Region}"
-          AP_AGENT_S3_REGION: !Ref AWS::Region
-          AP_AGENT_SSM_PARAMETERS: !Sub "AP_AGENT_POSTGRES_DSN=${SsmPrefix}/postgres-runtime-dsn"
-      # Single worker WITHOUT reserved concurrency (which would need an account quota of at least 101): every job
+          OCR_CLUSTER_ARN: !GetAtt OcrCluster.Arn
+          OCR_TASK_DEFINITION_ARN: !Ref OcrTaskDefinition
+          OCR_SUBNET_IDS: !Sub "${OcrSubnetA},${OcrSubnetB}"
+          OCR_SECURITY_GROUP_IDS: !Ref OcrSecurityGroup
+          JOBS_QUEUE_URL: !Ref JobsQueue
+      # Single active task WITHOUT reserved concurrency (which would need an account quota of at least 101): every job
       # message uses the one FIFO message group `ap-agent-jobs` (ap_agent.services.job_dispatch.MESSAGE_GROUP_ID), and
       # SQS never delivers a second message of a group while one is in flight, so with BatchSize 1 at most one
-      # invocation processes a job at a time. The atomic QUEUED->RUNNING claim is the second guard.
+      # invocation -- hence one task -- is active. The atomic QUEUED->RUNNING claim is the second guard.
       Events:
         Jobs:
           Type: SQS
@@ -474,7 +720,6 @@ Resources:
             Queue: !GetAtt JobsQueue.Arn
             BatchSize: 1
             Enabled: true
-            FunctionResponseTypes: [ReportBatchItemFailures]
 
   # No Function URL, no event source: invoked only deliberately (aws lambda invoke).
   MigrateFunction:
@@ -529,7 +774,7 @@ Resources:
   OldestJobMessageAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: A job message has waited over 30 minutes (worker not running or throttled).
+      AlarmDescription: A job message has waited over 30 minutes (dispatcher not running, a task failing repeatedly, or a message in retry back-off).
       Namespace: AWS/SQS
       MetricName: ApproximateAgeOfOldestMessage
       Dimensions:
@@ -542,14 +787,14 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
 
-  WorkerErrorsAlarm:
+  DispatcherErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: The OCR worker failed (error, timeout or out-of-memory).
+      AlarmDescription: The OCR dispatcher failed (a Fargate task failed, could not start, or timed out). See the dispatcher and /ecs log groups.
       Namespace: AWS/Lambda
       MetricName: Errors
       Dimensions:
-        - { Name: FunctionName, Value: !Ref WorkerFunction }
+        - { Name: FunctionName, Value: !Ref DispatcherFunction }
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
@@ -558,18 +803,18 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
 
-  WorkerDurationAlarm:
+  DispatcherDurationAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: A worker run took over 12 minutes -- approaching the 15-minute Lambda limit. Raise memory or move to the Fargate fallback.
+      AlarmDescription: A job took over 13 minutes end to end (image pull + OCR) -- approaching the dispatcher's 15-minute Lambda limit.
       Namespace: AWS/Lambda
       MetricName: Duration
       Dimensions:
-        - { Name: FunctionName, Value: !Ref WorkerFunction }
+        - { Name: FunctionName, Value: !Ref DispatcherFunction }
       Statistic: Maximum
       Period: 300
       EvaluationPeriods: 1
-      Threshold: 720000
+      Threshold: 780000
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
@@ -619,8 +864,18 @@ Outputs:
     Value: !Ref JobsQueue
   DeadLetterQueueUrl:
     Value: !Ref JobsDeadLetterQueue
-  WorkerFunctionArn:
-    Value: !GetAtt WorkerFunction.Arn
+  DispatcherFunctionArn:
+    Value: !GetAtt DispatcherFunction.Arn
+  OcrClusterArn:
+    Value: !GetAtt OcrCluster.Arn
+  OcrTaskDefinitionArn:
+    Value: !Ref OcrTaskDefinition
+  OcrSubnetIds:
+    Value: !Sub "${OcrSubnetA},${OcrSubnetB}"
+  OcrSecurityGroupId:
+    Value: !Ref OcrSecurityGroup
+  OcrLogGroupName:
+    Value: !Ref OcrLogGroup
   MigrationFunctionArn:
     Value: !GetAtt MigrateFunction.Arn
   AlarmTopicArn:

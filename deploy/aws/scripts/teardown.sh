@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# Complete teardown: empties the invoice bucket, deletes the application and ECR stacks, the SSM secrets and the
-# deployment bucket SAM created, then verifies that nothing billable remains. DESTRUCTIVE: invoice objects are lost
-# (database rows in Neon are not touched). Requires typing the environment name to confirm.
+# Teardown. DESTRUCTIVE: invoice objects are lost (database rows in Neon are not touched). Requires typing the environment
+# name to confirm.
+#   teardown.sh --stack-only    deletes ONLY the application stack (and empties its invoice bucket first). The ECR stack with its
+#                               images and the SSM secrets are KEPT, so a corrected stack can be redeployed without rebuilding.
+#                               This is the right command after a failed first deployment.
+#   teardown.sh                 complete teardown: also the ECR stack and images, the SSM secrets and (optionally) the SAM bucket.
 source "$(dirname "$0")/_common.sh"
 need aws; need jq
+STACK_ONLY=0
+case "${1:-}" in --stack-only) STACK_ONLY=1;; "") ;; *) die "usage: teardown.sh [--stack-only]";; esac
 echo "This permanently deletes the '$ENVIRONMENT' AWS deployment in $AWS_REGION (account $(masked "$(account_id)"))."
 read -r -p "Type the environment name ($ENVIRONMENT) to continue: " CONFIRM
 [ "$CONFIRM" = "$ENVIRONMENT" ] || die "not confirmed."
@@ -20,6 +25,12 @@ fi
 
 echo "deleting application stack..."
 aws cloudformation delete-stack --stack-name "$APP_STACK"; aws cloudformation wait stack-delete-complete --stack-name "$APP_STACK"
+
+if [ "$STACK_ONLY" -eq 1 ]; then
+  echo "stack-only: the ECR stack, the images and the SSM secrets were kept."
+  aws ecs list-clusters --query "clusterArns[?contains(@, 'ap-agent-${ENVIRONMENT}')]" --output text
+  exit 0
+fi
 
 echo "deleting container images and ECR stack..."
 for repo in web api worker migrate; do

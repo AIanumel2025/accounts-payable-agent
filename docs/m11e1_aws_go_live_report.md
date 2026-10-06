@@ -1,5 +1,12 @@
 # M11E.1 — Cost-optimised AWS go-live: report
 
+> **Superseded in part by M11E.2 (`docs/m11e2_fargate_ocr_correction.md`).** The first real deployment failed because this
+> AWS account caps Lambda memory at 3,008 MB, so the 8 GB OCR worker cannot be a Lambda function. The OCR now runs in an
+> on-demand ECS Fargate task (4 vCPU / 8 GB) started by a small dispatcher Lambda. Wherever this report says "worker
+> Lambda", `WorkerFunction`, `WorkerMemoryMb`, `WorkerErrorsAlarm`/`WorkerDurationAlarm` or "Fargate fallback", read the
+> M11E.2 report; `deploy/aws/fargate-fallback.yaml` no longer exists. Everything else (security boundaries, the benchmark
+> numbers, application changes) still holds. Nothing is deployed.
+
 **Status: State B — infrastructure, application changes and tests are complete; the stack is NOT deployed.**
 No AWS stack exists, no migration ran, no hosted acceptance was performed and there is **no public URL yet**. The only
 blockers are the operator's AWS session and the user-held Clerk/Neon secrets. The ordered procedure that takes you
@@ -34,7 +41,7 @@ browser ── HTTPS ──► web Lambda  (Next.js 16 standalone + Lambda Web A
    │                    │  └── SQS FIFO  ── send {job_id, tenant_id, dispatch_generation}
    └── presigned POST ──► private S3 bucket          │
                                                      ▼
-                              worker Lambda (SQS trigger, batch 1, one FIFO message group, 900 s)
+                              dispatcher Lambda (SQS trigger, batch 1, one FIFO message group, 900 s) → ONE Fargate task (M11E.2)
                                  └─ per job: claim (QUEUED→RUNNING) → fresh child process → real PaddleOCR → Neon / S3 (read-only)
 migration Lambda (no URL, no trigger; invoked by an operator) ── migration/owner DSN ── Neon
 DLQ (FIFO) ◄── redrive after 3 receives
@@ -43,10 +50,9 @@ DLQ (FIFO) ◄── redrive after 3 receives
 Resources (`deploy/aws/template.yaml`, SAM): 4 container-image Lambda functions (web, api, worker, migrate), 2 Function
 URLs (public / IAM), SQS FIFO queue + FIFO DLQ + redrive, private S3 bucket (+ policy), 4 IAM roles (one per function),
 4 log groups (14 days), SNS topic + 6 alarms, outputs. `deploy/aws/ecr.yaml`: 4 ECR repositories with lifecycle rules
-(keep 3 images, expire untagged after 1 day). `deploy/aws/fargate-fallback.yaml`: an **isolated, optional** on-demand
-ECS Fargate worker (EventBridge Pipes → one task per message; no service, NAT or load balancer), not deployed by default.
+(keep 3 images, expire untagged after 1 day). *(M11E.1 text, superseded:)* an optional EventBridge-Pipes Fargate fallback template. M11E.2 removed it: Fargate is now the primary OCR runtime inside `template.yaml`.
 
-Required outputs: `FrontendUrl`, `ApiUrl`, `UploadBucketName`, `QueueUrl`, `WorkerFunctionArn`, `MigrationFunctionArn`
+Required outputs: `FrontendUrl`, `ApiUrl`, `UploadBucketName`, `QueueUrl`, `DispatcherFunctionArn` (was `WorkerFunctionArn`), `MigrationFunctionArn`
 (plus `DeadLetterQueueUrl`, `AlarmTopicArn`). Tags `Project=accounts-payable-agent`, `Environment=production`,
 `ManagedBy=cloudformation` on every taggable resource and function.
 
@@ -165,7 +171,7 @@ Slowest 79 s (limit 720 s); peak 6.6 GB fits 8192 MB with ~19 % headroom and wou
 proves the baked models and fonts need no network and no writable image path. Still a GitHub-runner measurement, not
 Lambda itself.
 
-**Verdict:** Lambda is viable *for the controlled invoices at 8192 MB*. It is **not proven for the largest allowed input**
+**Verdict (M11E.1, superseded):** *Lambda would have been viable for the controlled invoices at 8192 MB — but the account caps Lambda at 3,008 MB (M11E.2), so the same measurement now justifies the Fargate 4 vCPU / 8 GB task.* It is **not proven for the largest allowed input**
 (a 10 MB, many-page scan could need more than the 10,240 MB Lambda maximum). The Fargate fallback is therefore kept ready
 and isolated; the alarms (`WorkerDurationAlarm` > 12 min, `WorkerErrorsAlarm`) and the `WORKER_PROCESS_FAILED` job error
 are the triggers to use it. The CI benchmark above is the closest Lambda-like measurement available before deployment.

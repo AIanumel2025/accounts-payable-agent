@@ -35,3 +35,10 @@ read_secret() {
   [ -n "$__value" ] || die "empty value for: $__prompt"
   printf -v "$__var" '%s' "$__value"
 }
+
+# The repository part of an image URI (tag or @digest removed): <registry>/<repository>. Used for `sam deploy --image-repositories`.
+image_repository() { # <image-uri>
+  local uri="${1%@*}"
+  case "${uri##*/}" in *:*) uri="${uri%:*}";; esac
+  printf '%s' "$uri"
+}

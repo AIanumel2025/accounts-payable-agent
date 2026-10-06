@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Static verification of the AWS deployment templates (`deploy/aws/*.yaml`) against the
-M11E.1 rules. Needs PyYAML only (no AWS access, no CloudFormation service). Exits non-zero
+M11E.1 / M11E.2 rules (heavy OCR runs on on-demand ECS Fargate, never in a >3,008 MB Lambda). Needs PyYAML only (no AWS access, no CloudFormation service). Exits non-zero
 and lists every violation. Complements `cfn-lint` / `sam validate --lint`, which check
 syntax and schema; this checks the *policy*: cost controls, public/private surfaces,
 secret handling and least privilege.
@@ -19,14 +19,18 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 AWS_DIR = REPO / "deploy" / "aws"
 
+LAMBDA_ACCOUNT_MEMORY_LIMIT_MB = 3008  # this AWS account's observed cap (the real deployment failed above it)
+WORKER_MINIMUM_MEMORY_MB = 8192
 REQUIRED_OUTPUTS = (
-    "FrontendUrl", "ApiUrl", "UploadBucketName", "QueueUrl", "WorkerFunctionArn", "MigrationFunctionArn",
+    "FrontendUrl", "ApiUrl", "UploadBucketName", "QueueUrl", "DispatcherFunctionArn", "MigrationFunctionArn",
+    "OcrClusterArn", "OcrTaskDefinitionArn", "OcrSubnetIds", "OcrSecurityGroupId",
 )
 REQUIRED_TAGS = ("Project", "Environment", "ManagedBy")
 FORBIDDEN_RESOURCE_PREFIXES = (
-    "AWS::EC2::NatGateway", "AWS::EC2::Instance", "AWS::EC2::VPC", "AWS::EC2::Subnet", "AWS::EC2::EIP",
+    "AWS::EC2::NatGateway", "AWS::EC2::Instance", "AWS::EC2::EIP", "AWS::EC2::VPCEndpoint", "AWS::EC2::TransitGateway",
+    "AWS::EC2::VPNConnection", "AWS::EC2::LaunchTemplate", "AWS::ECS::CapacityProvider",
     "AWS::ElasticLoadBalancing", "AWS::ElasticLoadBalancingV2", "AWS::RDS::", "AWS::OpenSearchService::",
-    "AWS::Elasticsearch::", "AWS::ElastiCache::", "AWS::Route53", "AWS::ECS::Service", "AWS::AutoScaling",
+    "AWS::Elasticsearch::", "AWS::ElastiCache::", "AWS::Route53", "AWS::ECS::Service", "AWS::ECS::TaskSet", "AWS::AutoScaling",
     "AWS::ApplicationAutoScaling", "AWS::CloudFront::", "AWS::Amplify", "AWS::ApiGateway", "AWS::ApiGatewayV2",
     "AWS::Lambda::Alias", "AWS::Lambda::Version", "AWS::EKS::", "AWS::DynamoDB::",
 )
@@ -99,7 +103,7 @@ def verify_application_template(template: dict[str, Any], *, raw_text: str = "")
 
     # -- functions --------------------------------------------------------------------------
     functions = _resources(template, "AWS::Serverless::Function")
-    expected = {"ApiFunction", "WebFunction", "WorkerFunction", "MigrateFunction"}
+    expected = {"ApiFunction", "WebFunction", "DispatcherFunction", "MigrateFunction"}
 
     if set(functions) != expected:
         problems.append(f"expected exactly the functions {sorted(expected)}, found {sorted(functions)}")
@@ -113,7 +117,12 @@ def verify_application_template(template: dict[str, Any], *, raw_text: str = "")
         if not (isinstance(props.get("ImageUri"), dict) and "Ref" in props["ImageUri"]):
             problems.append(f"{name}: ImageUri must come from a parameter")
 
-    api, web, worker, migrate = (functions.get(n, {}).get("Properties", {}) for n in ("ApiFunction", "WebFunction", "WorkerFunction", "MigrateFunction"))
+        memory = props.get("MemorySize")
+
+        if not isinstance(memory, int) or memory > LAMBDA_ACCOUNT_MEMORY_LIMIT_MB:
+            problems.append(f"{name}: Lambda MemorySize must be a literal at most {LAMBDA_ACCOUNT_MEMORY_LIMIT_MB} MB (the account cap)")
+
+    api, web, dispatcher, migrate = (functions.get(n, {}).get("Properties", {}) for n in ("ApiFunction", "WebFunction", "DispatcherFunction", "MigrateFunction"))
 
     if api.get("FunctionUrlConfig", {}).get("AuthType") != "AWS_IAM":
         problems.append("ApiFunction: Function URL must use AuthType AWS_IAM")
@@ -121,37 +130,42 @@ def verify_application_template(template: dict[str, Any], *, raw_text: str = "")
     if web.get("FunctionUrlConfig", {}).get("AuthType") != "NONE":
         problems.append("WebFunction: the public frontend URL must be the only AuthType NONE URL")
 
-    for name, props in (("WorkerFunction", worker), ("MigrateFunction", migrate)):
+    for name, props in (("DispatcherFunction", dispatcher), ("MigrateFunction", migrate)):
         if "FunctionUrlConfig" in props:
             problems.append(f"{name}: must not have a Function URL")
 
     if migrate.get("Events"):
         problems.append("MigrateFunction: must not have an event source (explicit invocation only)")
 
-    if worker.get("Timeout") != 900:
-        problems.append("WorkerFunction: Timeout must be 900")
+    if dispatcher.get("Timeout") != 900:
+        problems.append("DispatcherFunction: Timeout must be 900")
 
-    # No worker reservation: it would need an account quota of at least 101. Single-worker execution comes from the
+    if _mentions(dispatcher.get("ImageUri"), "WorkerImageUri"):
+        problems.append("DispatcherFunction: must not use the heavy worker image")
+
+    if dispatcher.get("ImageConfig", {}).get("Command") != ["ap_agent.aws.fargate_dispatcher.handler"]:
+        problems.append("DispatcherFunction: ImageConfig.Command must be ap_agent.aws.fargate_dispatcher.handler")
+
+    # No reservation on the dispatcher: it would need an account quota of at least 101. Single active task comes from the
     # FIFO design (one message group, batch size 1), checked below and in test_m11e1_queue_worker.py.
-    if "ReservedConcurrentExecutions" in worker or "WorkerReservedConcurrency" in parameters:
-        problems.append("WorkerFunction: must not use reserved concurrency (needs a quota of at least 101)")
+    if "ReservedConcurrentExecutions" in dispatcher or "WorkerReservedConcurrency" in parameters:
+        problems.append("DispatcherFunction: must not use reserved concurrency (needs a quota of at least 101)")
+
+    if "WorkerFunction" in resources or "WorkerMemoryMb" in parameters:
+        problems.append("the OCR worker must not be a Lambda function (account memory cap): it runs on Fargate")
 
     web_api = parameters.get("WebAndApiReservedConcurrency", {})
 
     if web_api.get("Default") != -1 or web_api.get("MinValue") != -1:
         problems.append("WebAndApiReservedConcurrency: optional and disabled by default (-1)")
 
-    if parameters.get("WorkerMemoryMb", {}).get("Default", 0) < 4096:
-        problems.append("WorkerFunction: memory must default to at least 4096 MB")
-
-    if worker.get("EphemeralStorage", {}).get("Size") is None:
-        problems.append("WorkerFunction: ephemeral storage must be configured")
-
-    event = next(iter(worker.get("Events", {}).values()), {})
+    event = next(iter(dispatcher.get("Events", {}).values()), {})
     sqs = event.get("Properties", {})
 
-    if event.get("Type") != "SQS" or sqs.get("BatchSize") != 1 or "ReportBatchItemFailures" not in sqs.get("FunctionResponseTypes", []):
-        problems.append("WorkerFunction: must be triggered by SQS with BatchSize 1 and ReportBatchItemFailures")
+    if event.get("Type") != "SQS" or sqs.get("BatchSize") != 1 or "MaximumBatchingWindowInSeconds" in sqs or "ScalingConfig" in sqs:
+        problems.append("DispatcherFunction: must be triggered by SQS with BatchSize 1 and no batching window or scaling config")
+
+    problems += _verify_fargate(template)
 
     # -- queue ------------------------------------------------------------------------------
     queues = _resources(template, "AWS::SQS::Queue")
@@ -161,8 +175,8 @@ def verify_application_template(template: dict[str, Any], *, raw_text: str = "")
     if not main.get("FifoQueue") or not dead.get("FifoQueue"):
         problems.append("queues: both the main queue and the dead-letter queue must be FIFO")
 
-    if main.get("VisibilityTimeout", 0) < 6 * worker.get("Timeout", 900):
-        problems.append("JobsQueue: VisibilityTimeout must be at least six times the worker timeout")
+    if main.get("VisibilityTimeout", 0) < 6 * dispatcher.get("Timeout", 900):
+        problems.append("JobsQueue: VisibilityTimeout must be at least six times the dispatcher timeout")
 
     redrive = main.get("RedrivePolicy", {})
 
@@ -198,15 +212,15 @@ def verify_application_template(template: dict[str, Any], *, raw_text: str = "")
     # -- logs, tags, outputs ------------------------------------------------------------------
     log_groups = _resources(template, "AWS::Logs::LogGroup")
 
-    if len(log_groups) != 4 or not all(group["Properties"].get("RetentionInDays") for group in log_groups.values()):
-        problems.append("every function needs a log group with a retention period")
+    if len(log_groups) != 5 or not all(group["Properties"].get("RetentionInDays") for group in log_groups.values()):
+        problems.append("every function and the OCR task need a log group with a retention period")
 
     function_tags = template.get("Globals", {}).get("Function", {}).get("Tags", {})
 
     if not all(tag in function_tags for tag in REQUIRED_TAGS) or function_tags.get("Project") != "accounts-payable-agent" or function_tags.get("ManagedBy") != "cloudformation":
         problems.append("Globals.Function.Tags must set Project, Environment and ManagedBy")
 
-    for kind in ("AWS::S3::Bucket", "AWS::SQS::Queue", "AWS::IAM::Role", "AWS::SNS::Topic"):
+    for kind in ("AWS::S3::Bucket", "AWS::SQS::Queue", "AWS::IAM::Role", "AWS::SNS::Topic", "AWS::ECS::Cluster", "AWS::ECS::TaskDefinition", "AWS::EC2::VPC", "AWS::EC2::SecurityGroup"):
         for name, body in _resources(template, kind).items():
             keys = {tag["Key"] for tag in body["Properties"].get("Tags", [])}
 
@@ -248,33 +262,190 @@ def verify_application_template(template: dict[str, Any], *, raw_text: str = "")
         for statement in _statements(role):
             actions = statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
 
-            if any(action == "*" or action.endswith(":*") for action in actions) or statement.get("Resource") == "*":
-                problems.append(f"{name}: wildcard action or resource in statement {statement.get('Sid')}")
+            if any(action == "*" or action.endswith(":*") for action in actions):
+                problems.append(f"{name}: wildcard action in statement {statement.get('Sid')}")
+
+            # ecr:GetAuthorizationToken is the one action AWS does not let you scope to a resource.
+            if statement.get("Resource") == "*" and actions != ["ecr:GetAuthorizationToken"]:
+                problems.append(f"{name}: wildcard resource in statement {statement.get('Sid')}")
 
     def role_text(name: str) -> str:
         return json.dumps(roles[name]["Properties"]["Policies"])
 
-    if "postgres-migration-dsn" in role_text("WebRole") + role_text("ApiRole") + role_text("WorkerRole"):
+    runtime_roles = ("WebRole", "ApiRole", "DispatcherRole", "OcrExecutionRole", "OcrTaskRole")
+
+    if any(name not in roles for name in runtime_roles + ("MigrateRole",)):
+        return problems + ["expected the roles " + ", ".join(runtime_roles + ("MigrateRole",))]
+
+    if "postgres-migration-dsn" in "".join(role_text(name) for name in runtime_roles):
         problems.append("only the migration role may read the migration/owner DSN")
 
     if "postgres-migration-dsn" not in role_text("MigrateRole") or "postgres-runtime-dsn" in role_text("MigrateRole"):
         problems.append("MigrateRole: must read the migration DSN and nothing else secret")
 
-    for name in ("WebRole", "WorkerRole", "MigrateRole"):
+    for name in ("WebRole", "DispatcherRole", "OcrExecutionRole", "OcrTaskRole", "MigrateRole"):
         if "sqs:SendMessage" in role_text(name):
             problems.append(f"{name}: only the API dispatches jobs")
 
-    if "s3:PutObject" in role_text("WorkerRole") or "s3:DeleteObject" in role_text("WorkerRole") or "s3:" in role_text("WebRole") or "s3:" in role_text("MigrateRole"):
-        problems.append("S3 access: the worker is read-only; the web and migration roles have none")
+    for name in ("WebRole", "DispatcherRole", "OcrExecutionRole", "MigrateRole"):
+        if "s3:" in role_text(name):
+            problems.append(f"S3 access: {name} has none (the API writes, the OCR task role only reads)")
+
+    if "s3:PutObject" in role_text("OcrTaskRole") or "s3:DeleteObject" in role_text("OcrTaskRole"):
+        problems.append("S3 access: the OCR task role is read-only")
+
+    # Only the OCR task role (never the execution role, the dispatcher or the web role) may read the runtime DSN besides the API.
+    for name in ("DispatcherRole", "OcrExecutionRole", "WebRole"):
+        if "ssm:" in role_text(name) and name != "WebRole":
+            problems.append(f"{name}: must not read any SSM parameter (secrets are read by the OCR process via its task role)")
+
+    if "postgres-runtime-dsn" not in role_text("OcrTaskRole"):
+        problems.append("OcrTaskRole: must read the runtime DSN (and nothing else secret)")
+
+    for name in ("DispatcherRole", "OcrExecutionRole", "OcrTaskRole"):
+        for statement in _statements(roles[name]):
+            if "sqs:" in json.dumps(statement["Action"]) and name != "DispatcherRole":
+                problems.append(f"{name}: no queue access (the dispatcher consumes and acknowledges messages)")
+
+    for name in ("WebRole", "OcrExecutionRole", "OcrTaskRole", "MigrateRole"):
+        if "ecs:" in role_text(name) or "iam:PassRole" in role_text(name):
+            problems.append(f"{name}: must not start tasks or pass roles (only the dispatcher may)")
 
     invoke = [s for s in _statements(roles["WebRole"]) if "lambda:InvokeFunctionUrl" in json.dumps(s["Action"])]
 
     if len(invoke) != 1 or not _mentions(invoke[0]["Resource"], "ApiFunction"):
         problems.append("WebRole: must be allowed to invoke exactly the API Function URL")
 
-    for name in ("ApiRole", "WorkerRole", "MigrateRole"):
+    for name in ("ApiRole", "DispatcherRole", "OcrExecutionRole", "OcrTaskRole", "MigrateRole"):
         if "lambda:InvokeFunctionUrl" in role_text(name):
             problems.append(f"{name}: only the frontend role may invoke the API")
+
+    return problems
+
+
+def _verify_fargate(template: dict[str, Any]) -> list[str]:
+    problems: list[str] = []
+    resources = template["Resources"]
+    definitions = _resources(template, "AWS::ECS::TaskDefinition")
+    definition = definitions.get("OcrTaskDefinition", {}).get("Properties")
+
+    if len(definitions) != 1 or definition is None:
+        return ["expected exactly one ECS task definition named OcrTaskDefinition"]
+
+    if "FARGATE" not in definition.get("RequiresCompatibilities", []) or definition.get("NetworkMode") != "awsvpc":
+        problems.append("OcrTaskDefinition: must be a Fargate awsvpc task")
+
+    if str(definition.get("Cpu")) != "4096" or str(definition.get("Memory")) != str(WORKER_MINIMUM_MEMORY_MB):
+        problems.append("OcrTaskDefinition: must keep the benchmarked 4 vCPU (4096) / 8192 MB")
+
+    for role in ("ExecutionRoleArn", "TaskRoleArn"):
+        if not _mentions(definition.get(role), "Ocr"):
+            problems.append(f"OcrTaskDefinition: {role} must be the dedicated OCR role")
+
+    containers = definition.get("ContainerDefinitions", [])
+
+    if len(containers) != 1 or containers[0].get("Name") != "worker" or containers[0].get("Essential") is not True:
+        problems.append("OcrTaskDefinition: exactly one essential container named worker")
+        return problems
+
+    container = containers[0]
+
+    if container.get("Image") != {"Ref": "WorkerImageUri"}:
+        problems.append("OcrTaskDefinition: the image must come from the WorkerImageUri parameter")
+
+    if container.get("EntryPoint") != ["python", "-m"] or container.get("Command") != ["ap_agent.worker.dispatch_task"]:
+        problems.append("OcrTaskDefinition: must override the Lambda ENTRYPOINT and run python -m ap_agent.worker.dispatch_task")
+
+    if container.get("LogConfiguration", {}).get("LogDriver") != "awslogs":
+        problems.append("OcrTaskDefinition: container logs must go to CloudWatch (awslogs)")
+
+    if "Secrets" in container:
+        problems.append("OcrTaskDefinition: no ECS-injected secrets (the process reads SSM through its task role)")
+
+    for variable in container.get("Environment", []):
+        name, value = variable.get("Name", ""), variable.get("Value")
+
+        if re.search(r"(SECRET|PASSWORD|_DSN|ACCESS_KEY|PRIVATE|JWT_KEY)", name):
+            problems.append(f"OcrTaskDefinition: environment variable {name} would hold a secret value")
+
+        if isinstance(value, str) and SECRET_VALUE.search(value):
+            problems.append(f"OcrTaskDefinition: environment variable {name} contains secret-looking data")
+
+    # -- network: public subnets, no NAT, no inbound ------------------------------------------
+    group = resources.get("OcrSecurityGroup", {}).get("Properties", {})
+
+    if group.get("SecurityGroupIngress"):
+        problems.append("OcrSecurityGroup: must have no inbound rule")
+
+    egress = group.get("SecurityGroupEgress") or []
+
+    if not egress or any(rule.get("FromPort") not in (443, 5432) or rule.get("ToPort") not in (443, 5432) or rule.get("IpProtocol") != "tcp" for rule in egress):
+        problems.append("OcrSecurityGroup: outbound is limited to tcp 443 (HTTPS) and 5432 (PostgreSQL)")
+
+    subnets = _resources(template, "AWS::EC2::Subnet")
+
+    if len(subnets) < 2 or any(subnet["Properties"].get("MapPublicIpOnLaunch") is True for subnet in subnets.values()):
+        problems.append("OCR subnets: at least two, with public IPs assigned only per task by the dispatcher")
+
+    for kind in ("AWS::EC2::InternetGateway", "AWS::EC2::VPC"):
+        if len(_resources(template, kind)) != 1:
+            problems.append(f"expected exactly one {kind}")
+
+    dispatcher_env = resources.get("DispatcherFunction", {}).get("Properties", {}).get("Environment", {}).get("Variables", {})
+
+    for name in ("OCR_CLUSTER_ARN", "OCR_TASK_DEFINITION_ARN", "OCR_SUBNET_IDS", "OCR_SECURITY_GROUP_IDS", "JOBS_QUEUE_URL"):
+        if name not in dispatcher_env:
+            problems.append(f"DispatcherFunction: environment variable {name} is required")
+
+    # -- dispatcher policy: narrow ECS permissions ---------------------------------------------
+    roles = _resources(template, "AWS::IAM::Role")
+    statements = _statements(roles["DispatcherRole"]) if "DispatcherRole" in roles else []
+    run = [s for s in statements if "ecs:RunTask" in json.dumps(s["Action"])]
+
+    if len(run) != 1 or not _mentions(run[0].get("Resource"), "task-definition/ap-agent-") or "ecs:cluster" not in json.dumps(run[0].get("Condition", {})):
+        problems.append("DispatcherRole: ecs:RunTask must be limited to the OCR task definition and cluster")
+
+    for action in ("ecs:DescribeTasks", "ecs:StopTask"):
+        scoped = [s for s in statements if action in json.dumps(s["Action"])]
+
+        if len(scoped) != 1 or not _mentions(scoped[0].get("Resource"), "OcrCluster"):
+            problems.append(f"DispatcherRole: {action} must be limited to tasks of the OCR cluster")
+
+    pass_role = [s for s in statements if "iam:PassRole" in json.dumps(s["Action"])]
+
+    if len(pass_role) != 1 or "ecs-tasks.amazonaws.com" not in json.dumps(pass_role[0].get("Condition", {})) or not (
+        _mentions(pass_role[0]["Resource"], "OcrExecutionRole") and _mentions(pass_role[0]["Resource"], "OcrTaskRole")
+    ):
+        problems.append("DispatcherRole: iam:PassRole must be limited to the two OCR roles, passed to ecs-tasks.amazonaws.com")
+
+    execution = json.dumps(roles.get("OcrExecutionRole", {}).get("Properties", {}).get("Policies", []))
+
+    if "repository/ap-agent-" not in execution or "/worker" not in execution:
+        problems.append("OcrExecutionRole: image pull must be limited to the worker repository")
+
+    return problems
+
+
+def lambda_memory_problems(template: dict[str, Any], *, limit: int = LAMBDA_ACCOUNT_MEMORY_LIMIT_MB) -> list[str]:
+    """Every Lambda memory size in `template` (resolved against parameter defaults) must be at most `limit` MB."""
+
+    problems: list[str] = []
+    parameters = template.get("Parameters", {})
+    values: list[tuple[str, Any]] = [
+        (name, body.get("Properties", {}).get("MemorySize"))
+        for name, body in template["Resources"].items()
+        if body.get("Type") in ("AWS::Serverless::Function", "AWS::Lambda::Function")
+    ]
+    globals_memory = template.get("Globals", {}).get("Function", {}).get("MemorySize")
+
+    for name, value in values:
+        value = globals_memory if value is None else value
+
+        if isinstance(value, dict) and "Ref" in value:
+            value = parameters.get(value["Ref"], {}).get("Default")
+
+        if not isinstance(value, int) or value > limit:
+            problems.append(f"{name}: Lambda memory {value!r} MB exceeds the {limit} MB limit")
 
     return problems
 
@@ -305,22 +476,23 @@ def verify_all(directory: Path = AWS_DIR) -> list[str]:
     problems = verify_application_template(load_template(application), raw_text=application.read_text(encoding="utf-8"))
     problems += [f"ecr.yaml: {p}" for p in verify_ecr_template(load_template(directory / "ecr.yaml"))]
 
-    for name in ("template.yaml", "ecr.yaml", "fargate-fallback.yaml"):
+    for name in ("template.yaml", "ecr.yaml"):
         text = (directory / name).read_text(encoding="utf-8")
 
         if SECRET_VALUE.search(text):
             problems.append(f"{name}: contains secret-looking data")
 
-    fallback = load_template(directory / "fargate-fallback.yaml")
-
-    if _resources(fallback, "AWS::ECS::Service") or _resources(fallback, "AWS::EC2::NatGateway") or _resources(fallback, "AWS::ElasticLoadBalancingV2::LoadBalancer"):
-        problems.append("fargate-fallback.yaml: no always-on service, NAT gateway or load balancer")
+    if (directory / "fargate-fallback.yaml").exists():
+        problems.append("fargate-fallback.yaml: obsolete (Fargate is the primary OCR runtime since M11E.2); remove it")
 
     return problems
 
 
 def main() -> int:
-    problems = verify_all()
+    if "--lambda-memory-limit" in sys.argv:  # used by preflight/CI: python verify_aws_templates.py --lambda-memory-limit
+        problems = lambda_memory_problems(load_template(AWS_DIR / "template.yaml"))
+    else:
+        problems = verify_all()
 
     for problem in problems:
         print(f"FAIL: {problem}", file=sys.stderr)
