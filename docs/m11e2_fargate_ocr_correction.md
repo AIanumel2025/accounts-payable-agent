@@ -99,7 +99,7 @@ unavailable, 6 unusable message, 7 transient, 8 deadline.
 
 | Check | Result |
 |---|---|
-| Full backend suite (`pytest -m "not requires_paddle" --ignore=tests/unit/test_paddleocr_adapter.py`, local PostgreSQL 16 with TLS) | **1560 passed**, 31 deselected, 0 failed (217 s) on `8efd09d` (before the pass-2 fixes; re-run result in §10) |
+| Full backend suite (`pytest -m "not requires_paddle" --ignore=tests/unit/test_paddleocr_adapter.py`, local PostgreSQL 16 with TLS) | **1560 passed**, 31 deselected, 0 failed (217 s) on `8efd09d`; **1577 passed**, 31 deselected, 0 failed (269 s) after the pass-2 fixes (§10) |
 | `tests/unit/test_m11e2_fargate_dispatcher.py` (mocked ECS/SQS, task entry point) | 57 passed |
 | `tests/unit/test_m11e2_deploy_scripts.py` (stub aws/sam/docker) | 38 passed |
 | `tests/unit/test_m11e1_aws_templates.py` (policy mutation tests) | 32 passed |
