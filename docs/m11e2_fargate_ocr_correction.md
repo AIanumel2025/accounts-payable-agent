@@ -338,6 +338,21 @@ holds the supplier, original memory unchanged, rejections without mutation) and 
 correction-editor tests. Three existing assertions were updated to the new contract (the capability listing and two
 "field not present" rejections).
 
+**M11E.4 results (local, on the final code):**
+
+| Check | Result |
+|---|---|
+| Full backend suite (`pytest -m "not requires_paddle" --ignore=tests/unit/test_paddleocr_adapter.py`, local PostgreSQL 16 with TLS) | **1662 passed**, 31 deselected, 0 failed (343 s) |
+| New unit tests (`test_m11e4_missing_header_correction.py`) | 32 passed |
+| New real-PostgreSQL flow (`test_m11e4_missing_supplier_postgres.py`, claim → correct missing supplier → resume) | 9 passed; 3 of them fail against the previous `src/` |
+| Frontend: `tsc`, `eslint`, `vitest` | clean; 603 tests passed (49 files); `api:check` OK |
+| Hosted acceptance (`test:e2e:hosted`) | 21/21 database checks, all browser scenarios passed |
+| Real FastAPI + PostgreSQL + Next.js (`test:e2e:integration`) | 8 passed |
+| Real review actions (`test:e2e:real-actions`) | 57 checks passed, 0 failed |
+| Real operations (`test:e2e:real-operations`) | 21/21 database checks |
+
+(The browser suites need `PLAYWRIGHT_CHROMIUM_EXECUTABLE` pointing at the pre-installed Chromium in this sandbox; on CI Playwright installs its own.)
+
 **Redeploy** (only the Python images contain this change — `api`, `migrate`/dispatcher and `worker`; the frontend image has the
 formatter fix, so `web` is rebuilt too):
 
