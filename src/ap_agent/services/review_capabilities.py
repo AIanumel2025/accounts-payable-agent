@@ -214,10 +214,11 @@ def build_command_capabilities(
     )
 
     header_values = dict(context.header_field_values)
+    # M11E.4: every header field the deployment explicitly allows is offered, including one the extractor never produced
+    # (current_value null) -- otherwise a genuinely missing value, e.g. SUPPLIER_NAME_MISSING, could never be supplied.
     correctable_headers = tuple(
-        {"field_name": field_name, "current_value": header_values[field_name]}
+        {"field_name": field_name, "current_value": header_values.get(field_name)}
         for field_name in config.correctable_header_fields
-        if field_name in header_values
     )
     line_values = tuple(
         {"line_number": line_number, "field_name": field_name, "current_value": value}

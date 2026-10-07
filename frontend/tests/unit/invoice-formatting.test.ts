@@ -39,14 +39,39 @@ describe("formatConfidence", () => {
     expect(missing.isMissing).toBe(true);
     expect(missing.isLow).toBe(false);
 
-    const low = formatConfidence(0.4);
+    const low = formatConfidence(40);
     expect(low.isMissing).toBe(false);
     expect(low.isLow).toBe(true);
     expect(low.display).toBe("40%");
 
-    const high = formatConfidence(0.97);
+    const high = formatConfidence(97);
     expect(high.isLow).toBe(false);
     expect(high.display).toBe("97%");
+  });
+
+  it("honours the backend's 0-100 contract (M11E.4: 99.99 rendered as 9999%)", () => {
+    expect(formatConfidence(99.99).display).toBe("99.99%");
+    expect(formatConfidence(100).display).toBe("100%");
+    expect(formatConfidence(100).ariaLabel).toBe("100% confidence");
+    expect(formatConfidence(99.99).ariaLabel).toBe("99.99% confidence");
+    expect(formatConfidence(87.5).display).toBe("87.5%");
+    expect(formatConfidence(0).display).toBe("0%"); // a present zero is not "unavailable"
+    expect(formatConfidence(0).isMissing).toBe(false);
+    expect(formatConfidence(99.999).display).toBe("100%"); // at most two decimals
+  });
+
+  it("flags low confidence on the 0-100 scale", () => {
+    expect(formatConfidence(69.9).isLow).toBe(true);
+    expect(formatConfidence(70).isLow).toBe(false);
+    expect(formatConfidence(100).isLow).toBe(false);
+  });
+
+  it("keeps null/undefined unavailable, never 0% or 10000%", () => {
+    for (const value of [null, undefined]) {
+      const result = formatConfidence(value);
+      expect(result.isMissing).toBe(true);
+      expect(result.display).not.toMatch(/\d%/);
+    }
   });
 
   it("never renders a missing confidence as 0%", () => {

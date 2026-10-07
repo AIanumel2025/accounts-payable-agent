@@ -259,6 +259,14 @@ options`. The runtime DSN points at Neon's **pooled** endpoint, which refuses st
 `src/ap_agent/db/connection.py` as of M11E.3 (it applies the limits transaction-locally on pooled endpoints) and redeploy — exact
 steps in `docs/m11e2_fargate_ocr_correction.md` §11. Do **not** "fix" this by switching the runtime DSN to the direct endpoint.
 
+### Troubleshooting: *Field to correct* lacks a field the agent flagged as missing (e.g. `SUPPLIER_NAME_MISSING`)
+
+Older API images only offered header fields that already existed. Since M11E.4 every header field listed in
+`InterfaceConfig.correctable_header_fields` is offered (current value *not recorded*) and can be supplied with a null previous
+value. Rebuild and redeploy `api` (and `worker` for the resume path); nothing needs to be re-uploaded — an existing case becomes
+correctable. Confidence shown as `9999%` means the `web` image predates the M11E.4 formatter fix. Steps:
+`docs/m11e2_fargate_ocr_correction.md` §12.
+
 ### Troubleshooting the Fargate path
 
 | Symptom | Look at | Typical cause |

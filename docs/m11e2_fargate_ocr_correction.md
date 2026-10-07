@@ -293,7 +293,74 @@ Verify (the frontend URL is `aws cloudformation describe-stacks --stack-name ap-
 Unverified until you run it: that the real pooler accepts the transaction-local `set_config` calls and the `pg_settings`
 read-back (both are ordinary statements PgBouncer forwards), and the end-to-end behaviour above.
 
-## 12. Is it safe to attempt another real pass 1?
+## 12. Real hosted finding: a missing header could not be supplied; confidence rendered as 9999% (M11E.4)
+
+The first real invoice exposed two production defects.
+
+1. **`SUPPLIER_NAME_MISSING` could not be corrected.** The agent raised the reason, but *Supplier name* was absent from the *Field
+   to correct* selector. Three rules refused a header that did not already exist in the stored record:
+   `build_command_capabilities` listed a correctable header only if it was present in `header_field_values`,
+   `validate_review_command` answered `HEADER_FIELD_NOT_PRESENT`, and `apply_correction_overlay` rejected an absent header target
+   (`CONFIRM_SUPPLIER` is deferred and no alternative). A genuinely missing value was therefore impossible to supply.
+2. **Confidence 9999% / 10000%.** The backend sends confidence on a 0–100 scale (the normaliser and the human-review overlay use
+   100); `formatConfidence` treated it as a 0–1 proportion and multiplied by 100.
+
+**Fix**
+
+* **Insertion, only when explicitly allowed.** A header field in `InterfaceConfig.correctable_header_fields` is now offered in
+  `correction_policy.header_fields` even when absent, with `current_value: null`. `validate_review_command` accepts a correction
+  for it only with `previous_value = null` (a non-null, i.e. forged, previous value is `PREVIOUS_VALUE_MISMATCH`); present fields
+  still need the exact stored value. Arbitrary fields (`CORRECTION_FIELD_NOT_ALLOWED`), a line number on a header, duplicate
+  targets, stale revisions, unknown evidence, blank values and missing reason/evidence are rejected exactly as before.
+  `HEADER_FIELD_NOT_PRESENT` is no longer produced.
+* **Overlay.** `apply_correction_overlay` creates the missing header in the *derived* normalization record: appended after the
+  existing fields (append-only), canonical value type for the field (`header_value_type`: text, date, decimal or currency code —
+  a test asserts it equals the normaliser's type for every header field), `HUMAN_REVIEW_CORRECTION` provenance
+  (`previous_value=<missing>`, decision id, reason, evidence), confidence `100`, `review_required=false`. A non-null
+  `previous_value` for an absent field raises `OVERLAY_PREVIOUS_VALUE_MISMATCH`. The input record and the stored
+  `invoice_memory_records` row are never touched; the result goes into the new derived version, from which the resumed stages
+  (`REFERENCE_MATCHING` for a supplier) read `SUPPLIER_NAME`.
+* **Frontend.** `formatConfidence` honours the 0–100 contract: `99.99 → 99.99%`, `100 → 100%` (at most two decimals), `null`
+  stays *unavailable*, low confidence is below 70. The correction editor already sent `previous_value: null` for a null current
+  value; it now simply receives the target.
+* **Existing live case 36258** becomes correctable after deployment **without a new upload**: it is a stored case, and the
+  selector, validation and overlay all work from the stored record (the API and worker images must be redeployed).
+
+**Behaviour change to note:** the selector now offers every *configured* header field, not only the extracted ones (the default
+configuration lists thirteen). That is what "explicitly included in `correctable_header_fields`" means; to narrow it, change the
+configuration, not the code.
+
+**Tests** (they fail on the previous code): `tests/unit/test_m11e4_missing_header_correction.py` (offered target, null previous,
+unconfigured and forged cases, line/duplicate/stale/evidence rules, overlay insertion, types, provenance, immutability,
+hydration round-trip), `tests/api/test_m11e4_missing_supplier_postgres.py` (real PostgreSQL, real API and worker: the complete
+claim → correct missing supplier → resume flow, restart at `REFERENCE_MATCHING`, supplier matched downstream, derived version
+holds the supplier, original memory unchanged, rejections without mutation) and the frontend formatter, detail-section and
+correction-editor tests. Three existing assertions were updated to the new contract (the capability listing and two
+"field not present" rejections).
+
+**Redeploy** (only the Python images contain this change — `api`, `migrate`/dispatcher and `worker`; the frontend image has the
+formatter fix, so `web` is rebuilt too):
+
+```bash
+cd ~/accounts-payable-agent && git pull origin claude/great-bardeen-w8wwlz && cd deploy/aws/scripts
+export AWS_REGION=eu-west-2 CLERK_PUBLISHABLE_KEY='pk_...' CLERK_ISSUER='https://<instance>.clerk.accounts.dev'
+TAG="$(git rev-parse --short=12 HEAD)"; FULL="$(git rev-parse HEAD)"; export IMAGE_TAG="$TAG"
+./build-and-push.sh api web                     # api: command validation/overlay; web: confidence formatter
+# worker (large) via CodeBuild, then recorded by digest:
+BUILD_ID=$(aws codebuild start-build --project-name <your-worker-build-project> --source-version "$FULL" \
+  --environment-variables-override name=IMAGE_TAG,value="$TAG",type=PLAINTEXT --query 'build.id' --output text)
+until [ "$(aws codebuild batch-get-builds --ids "$BUILD_ID" --query 'builds[0].buildStatus' --output text)" != IN_PROGRESS ]; do sleep 20; done
+aws codebuild batch-get-builds --ids "$BUILD_ID" --query 'builds[0].buildStatus' --output text   # SUCCEEDED
+./record-image.sh worker "$TAG"
+./build-and-push.sh migrate                     # the dispatcher shares it; keeps the code identical across images
+./preflight.sh && ./deploy.sh pass2 && ./smoke.sh
+```
+
+Then, signed in, open case 36258: *Field to correct* now lists *Supplier Name (header)*; claim the case, correct it (evidence is
+required), request resume, and confirm the job restarts at reference matching and the supplier is matched. Confidence values
+read `99.99%` / `100%`.
+
+## 13. Is it safe to attempt another real pass 1?
 
 Yes, subject to `./preflight.sh` printing "Preflight passed" (no `BLOCK` line) — in particular the Fargate quota and the
 `ROLLBACK_COMPLETE` check — and the stack-only cleanup of the failed stack first. The cheapest rollback is

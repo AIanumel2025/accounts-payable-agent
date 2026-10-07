@@ -31,7 +31,7 @@ const PRESENT_FIELD: InterfaceFieldValuePayload = {
   raw_value: "50.10",
   normalized_value: "50.10",
   value_type: "DECIMAL",
-  confidence: 0.6,
+  confidence: 60,
   review_required: false,
   evidence_reference_ids: ["ev-total-1", "ev-total-2"],
 };
@@ -54,6 +54,20 @@ describe("FieldsSection (M11B task §8B)", () => {
     render(<FieldsSection fields={[PRESENT_FIELD, MISSING_FIELD]} />);
     expect(screen.getByText("60%")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("renders the backend's 0-100 confidence as a percentage (M11E.4: 99.99 showed as 9999%)", () => {
+    render(
+      <FieldsSection
+        fields={[
+          { ...PRESENT_FIELD, field_name: "INVOICE_NUMBER", confidence: 99.99 },
+          { ...PRESENT_FIELD, field_name: "SUPPLIER_NAME", confidence: 100 },
+        ]}
+      />,
+    );
+    expect(screen.getByText("99.99%")).toBeInTheDocument();
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.queryByText(/9999|10000/)).not.toBeInTheDocument();
   });
 
   it("renders an empty state rather than an empty table when there are no fields", () => {

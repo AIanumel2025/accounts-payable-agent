@@ -126,7 +126,7 @@ function detailFor(c) {
     review_reasons: ["SUPPLIER_NAME_MISSING"],
     fields: fieldsFor(c).map((f) => ({
       field_name: f.field_name, raw_value: f.value, normalized_value: f.value,
-      value_type: f.field_name === "TOTAL_AMOUNT" ? "DECIMAL" : "TEXT", confidence: 0.9, review_required: false,
+      value_type: f.field_name === "TOTAL_AMOUNT" ? "DECIMAL" : "TEXT", confidence: 90, review_required: false,
       evidence_reference_ids: f.evidence,
     })),
     financial_checks: [{
