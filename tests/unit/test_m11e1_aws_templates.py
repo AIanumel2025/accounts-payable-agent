@@ -341,3 +341,64 @@ def test_the_dispatcher_has_no_reserved_concurrency_and_stays_single_through_the
 
 def test_the_obsolete_fargate_fallback_template_is_gone():
     assert not (REPO / "deploy" / "aws" / "fargate-fallback.yaml").exists()
+
+
+# -- M11E.2 real-AWS finding: Function URLs need BOTH lambda:InvokeFunctionUrl and lambda:InvokeFunction ----------------
+
+
+def _web_statements(document):
+    return _statements(document, "WebRole")
+
+
+def _by_sid(document, sid):
+    return next(s for s in _web_statements(document) if s["Sid"] == sid)
+
+
+def test_the_frontend_role_holds_both_function_url_permissions_each_restricted():
+    document = verifier.load_template(TEMPLATE)
+    url = _by_sid(document, "InvokeApiFunctionUrl")
+    function = _by_sid(document, "InvokeApiFunctionViaUrl")
+
+    assert url["Action"] == "lambda:InvokeFunctionUrl" and url["Resource"] == {"Fn::GetAtt": ["ApiFunction", "Arn"]}
+    assert url["Condition"] == {"StringEquals": {"lambda:FunctionUrlAuthType": "AWS_IAM"}}
+    assert function["Effect"] == "Allow" and function["Action"] == "lambda:InvokeFunction"
+    assert function["Resource"] == {"Fn::GetAtt": ["ApiFunction", "Arn"]}
+    assert function["Condition"] == {"Bool": {"lambda:InvokedViaFunctionUrl": "true"}}
+    assert "Principal" not in function  # an identity policy: no principal to broaden
+
+
+def test_dropping_either_function_url_action_or_restriction_fails_the_policy_check():
+    def drop(sid):
+        def mutate(d):
+            statements = _web_statements(d)
+            statements[:] = [s for s in statements if s["Sid"] != sid]
+
+        return mutate
+
+    def mutate_statement(sid, change):
+        def mutate(d):
+            change(_by_sid(d, sid))
+
+        return mutate
+
+    assert any("exactly one lambda:InvokeFunction" in p for p in _problems(drop("InvokeApiFunctionViaUrl")))
+    assert any("exactly one lambda:InvokeFunctionUrl" in p or "exactly the API Function URL" in p for p in _problems(drop("InvokeApiFunctionUrl")))
+    assert any("InvokedViaFunctionUrl" in p for p in _problems(mutate_statement("InvokeApiFunctionViaUrl", lambda s: s.pop("Condition"))))
+    assert any("InvokedViaFunctionUrl" in p for p in _problems(mutate_statement("InvokeApiFunctionViaUrl", lambda s: s.update(Condition={"Bool": {"lambda:InvokedViaFunctionUrl": "false"}}))))
+    assert any("FunctionUrlAuthType" in p for p in _problems(mutate_statement("InvokeApiFunctionUrl", lambda s: s.pop("Condition"))))
+
+
+def test_the_function_url_permissions_cannot_be_broadened():
+    assert any("API function ARN" in p or "only" in p for p in _problems(lambda d: _by_sid(d, "InvokeApiFunctionViaUrl").update(Resource="*")))
+    assert any("API function" in p for p in _problems(lambda d: _by_sid(d, "InvokeApiFunctionViaUrl").update(Resource={"Fn::GetAtt": ["MigrateFunction", "Arn"]})))
+    assert any("API function ARN" in p for p in _problems(lambda d: _by_sid(d, "InvokeApiFunctionViaUrl").update(Resource=[{"Fn::GetAtt": ["ApiFunction", "Arn"]}, {"Fn::GetAtt": ["WebFunction", "Arn"]}])))
+    assert any("wildcard" in p for p in _problems(lambda d: _by_sid(d, "InvokeApiFunctionViaUrl").update(Action="lambda:*")))
+
+    def second_invoke(d):
+        _web_statements(d).append({"Sid": "Extra", "Effect": "Allow", "Action": "lambda:InvokeFunction", "Resource": {"Fn::GetAtt": ["MigrateFunction", "Arn"]}})
+
+    def other_role_invokes(d):
+        _statements(d, "OcrTaskRole").append({"Sid": "Oops", "Effect": "Allow", "Action": "lambda:InvokeFunction", "Resource": "arn:x"})
+
+    assert any("exactly one lambda:InvokeFunction" in p for p in _problems(second_invoke))
+    assert any("only the frontend role" in p for p in _problems(other_role_invokes))

@@ -12,7 +12,12 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$FRONT/dashboard")";      
 loc="$(curl -s -o /dev/null -w '%{redirect_url}' -m 30 "$FRONT/dashboard")"
 case "$loc" in */sign-in*) echo "ok   redirect targets sign-in";; *) echo "FAIL redirect target ($loc)"; fail=1;; esac
 code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$FRONT/api/backend/api/v1/dashboard")";    check "unauthenticated data call is refused" "$code" 401
-code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 -X POST "$FRONT/api/v1/operations/upload-intents" -H 'x-ap-agent-clerk-authorization: Bearer forged')"; check "forged server-to-server header is refused" "$code" 403
+# The inbound x-ap-agent-clerk-authorization header is stripped; with no real Clerk session the route policy answers 401
+# AUTHENTICATION_REQUIRED (403 ORGANIZATION_REQUIRED is for a signed-in user without an active organization).
+forged="$(curl -s -m 30 -o /tmp/ap-smoke-forged.$$ -w '%{http_code}' -X POST "$FRONT/api/v1/operations/upload-intents" -H 'x-ap-agent-clerk-authorization: Bearer forged')"
+check "forged server-to-server header is refused (401, not authenticated)" "$forged" 401
+if grep -q AUTHENTICATION_REQUIRED /tmp/ap-smoke-forged.$$ 2>/dev/null; then echo "ok   forged header answered AUTHENTICATION_REQUIRED"; else echo "FAIL forged-header response lacks AUTHENTICATION_REQUIRED"; fail=1; fi
+rm -f /tmp/ap-smoke-forged.$$
 code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$API/health")";                            check "API Function URL rejects unsigned requests" "$code" 403
 code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 -H 'X-Tenant-ID: 11111111-1111-1111-1111-111111111111' -H 'X-Actor-Role: TENANT_ADMIN' "$API/api/v1/operations/jobs")"; check "API rejects forged identity headers" "$code" 403
 code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 "https://${BUCKET}.s3.${AWS_REGION}.amazonaws.com/")"; check "bucket is not publicly listable" "$code" 403

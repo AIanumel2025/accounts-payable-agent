@@ -354,3 +354,115 @@ def test_every_script_parses_and_prints_no_credentials(script):
     text = path.read_text()
     assert "--with-decryption" not in text or script == "create-secrets.sh"
     assert "AWS_SECRET_ACCESS_KEY" not in text and "aws configure set" not in text and "create-access-key" not in text
+
+
+# -- invoke-migration.sh (real-AWS finding: --tenant-key was parsed as a jq option) --------------------------------------------
+
+
+def _invoke(tree, tmp_path, *args):
+    stub = StubAws(tmp_path, [{"args": ["lambda", "invoke"], "out": '{"StatusCode":200}\n', "write_last_arg": '{"ok": true}'}])
+    result = _run(tree, stub, "invoke-migration.sh", *args)
+    calls = stub.calls_of("aws", "invoke")
+    payload = None
+
+    if calls:
+        import json
+
+        payload = json.loads(calls[0][calls[0].index("--payload") + 1])
+
+    return result, payload, stub
+
+
+def test_identity_register_tenant_passes_option_like_values_as_data(tree, tmp_path):
+    result, payload, _ = _invoke(tree, tmp_path, "identity", "register-tenant", "--tenant-key", "acme", "--display-name", "Acme Ltd")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert payload == {"action": "identity", "args": ["register-tenant", "--tenant-key", "acme", "--display-name", "Acme Ltd"]}
+
+
+def test_identity_register_keeps_uuid_org_user_and_role_in_exact_order(tree, tmp_path):
+    arguments = ["register", "--tenant-id", "11111111-2222-3333-4444-555555555555", "--org-id", "org_2abcDEF", "--user-id", "user_9xyz", "--role", "AP_OPERATOR"]
+    result, payload, _ = _invoke(tree, tmp_path, "identity", *arguments)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert payload == {"action": "identity", "args": arguments}  # order and count preserved exactly
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["register-tenant", "--tenant-key", "acme", "--display-name", "Acme Holdings of  Two Spaces"],
+        ["register-tenant", "--tenant-key", "k", "--display-name", "  leading and trailing  "],
+        ["inspect", "--tenant-id", "11111111-2222-3333-4444-555555555555", "--json"],
+        ["x", "--", "--help", "-n", "--args", "--arg"],  # jq option look-alikes, including a literal `--`
+        ["register-tenant", "--display-name", 'quote " backslash \\ dollar $HOME `backtick` $(id) ; & | > <'],
+        ["register-tenant", "--display-name", "multi\nline"],
+    ],
+)
+def test_identity_values_with_spaces_and_shell_metacharacters_arrive_verbatim(tree, tmp_path, values):
+    result, payload, _ = _invoke(tree, tmp_path, "identity", *values)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert payload == {"action": "identity", "args": values}
+
+
+def test_identity_arguments_are_never_interpolated_or_leaked(tree, tmp_path):
+    marker = tmp_path / "pwned"
+    values = ["register-tenant", "--display-name", f"$(touch {marker})", "--tenant-key", f"`touch {marker}`"]
+    result, payload, stub = _invoke(tree, tmp_path, "identity", *values)
+
+    assert result.returncode == 0 and payload["args"] == values
+    assert not marker.exists()  # nothing was evaluated by a shell
+    assert "AWS_SECRET" not in result.stdout + result.stderr and "--with-decryption" not in " ".join(sum(stub.calls(), []))
+
+
+def test_identity_needs_a_sub_command_and_migrate_payload_is_unchanged(tree, tmp_path):
+    result, payload, _ = _invoke(tree, tmp_path, "identity")
+    assert result.returncode != 0 and payload is None
+
+    result, payload, _ = _invoke(tree, tmp_path, "migrate")
+    assert result.returncode == 0 and payload == {"action": "migrate"}
+
+
+def test_a_failed_task_result_fails_the_script(tree, tmp_path):
+    stub = StubAws(tmp_path, [{"args": ["lambda", "invoke"], "out": "{}\n", "write_last_arg": '{"ok": false, "error": "X"}'}])
+
+    assert _run(tree, stub, "invoke-migration.sh", "migrate").returncode != 0
+
+
+# -- smoke.sh: a forged header with no session is 401 AUTHENTICATION_REQUIRED (403 is for a user without an organization) ----
+
+
+def _smoke(tree, tmp_path, *, forged_status="401", forged_body='{"errors":["AUTHENTICATION_REQUIRED"],"generated_at":"x"}'):
+    rules = [
+        {"args": ["describe-stacks", "FrontendUrl"], "out": "https://front.example.test/\n"},
+        {"args": ["describe-stacks", "ApiUrl"], "out": "https://api.example.test/\n"},
+        {"args": ["describe-stacks", "UploadBucketName"], "out": "bucket-x\n"},
+        {"args": ["upload-intents"], "tool": "curl", "out": forged_status, "body": forged_body},
+        {"args": [], "tool": "curl", "out": "200"},
+    ]
+    stub = StubAws(tmp_path, rules)
+    return _run(tree, stub, "smoke.sh"), stub
+
+
+def test_the_forged_header_check_expects_401_and_the_safe_error_code(tree, tmp_path):
+    result, stub = _smoke(tree, tmp_path)
+
+    assert "ok   forged server-to-server header is refused (401, not authenticated)" in result.stdout
+    assert "ok   forged header answered AUTHENTICATION_REQUIRED" in result.stdout
+    assert "FAIL forged" not in result.stdout
+
+
+def test_the_forged_header_check_fails_on_403_or_a_missing_error_code(tree, tmp_path):
+    wrong_status, _ = _smoke(tree, tmp_path / "a", forged_status="403")
+    assert "FAIL forged server-to-server header is refused (401, not authenticated) (expected 401, got 403)" in wrong_status.stdout
+
+    missing_code, _ = _smoke(tree, tmp_path / "b", forged_body='{"errors":["SOMETHING_ELSE"]}')
+    assert "FAIL forged-header response lacks AUTHENTICATION_REQUIRED" in missing_code.stdout and missing_code.returncode != 0
+
+
+def test_the_forged_header_is_still_sent_and_the_script_asserts_401_not_403():
+    text = (REPO / "deploy" / "aws" / "scripts" / "smoke.sh").read_text()
+
+    assert "x-ap-agent-clerk-authorization: Bearer forged" in text and '"$forged" 401' in text
+    assert 'check "forged server-to-server header is refused' in text and "403" not in text.split("forged=")[1].split("rm -f")[0]

@@ -9,7 +9,8 @@ ACTION="${1:-}"; shift || true
 FUNCTION="ap-agent-${ENVIRONMENT}-migrate"
 case "$ACTION" in
   migrate) PAYLOAD='{"action":"migrate"}' ;;
-  identity) [ "$#" -ge 1 ] || die "identity needs a CLI sub-command"; PAYLOAD="$(jq -cn '{action:"identity",args:$ARGS.positional}' --args "$@")" ;;
+  identity) [ "$#" -ge 1 ] || die "identity needs a CLI sub-command"; # `--` ends jq's own option parsing, so values such as --tenant-key are data, never jq options.
+    PAYLOAD="$(jq -cn --args '{action:"identity",args:$ARGS.positional}' -- "$@")" ;;
   *) die "usage: invoke-migration.sh migrate | identity <cli args...>" ;;
 esac
 OUT="$(mktemp)"; trap 'rm -f "$OUT"' EXIT

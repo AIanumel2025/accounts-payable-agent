@@ -20,6 +20,10 @@ if "--password-stdin" in argv:
     sys.stdin.read()  # consume the piped login token (never echoed)
 for rule in json.load(open(os.environ["STUB_RULES"])):
     if rule.get("tool", os.path.basename(sys.argv[0])) == os.path.basename(sys.argv[0]) and all(part in joined for part in rule["args"]):
+        if "write_last_arg" in rule:  # `aws lambda invoke --payload <json> <outfile> ...`: the response body goes to <outfile>
+            open(argv[argv.index("--payload") + 2], "w").write(rule["write_last_arg"])
+        if os.path.basename(sys.argv[0]) == "curl" and "-o" in argv:  # `curl -o <file> -w <fmt>`: body to the file, status to stdout
+            open(argv[argv.index("-o") + 1], "w").write(rule.get("body", ""))
         sys.stdout.write(rule.get("out", ""))
         sys.stderr.write(rule.get("err", ""))
         sys.exit(rule.get("rc", 0))
@@ -36,7 +40,7 @@ class StubAws:
         self.rules_path.write_text(json.dumps(rules))
         self.log.write_text("")
 
-        for tool in ("aws", "sam", "docker"):
+        for tool in ("aws", "sam", "docker", "curl"):
             path = self.bin / tool
             path.write_text(STUB.format(python=sys.executable))
             path.chmod(path.stat().st_mode | stat.S_IEXEC)

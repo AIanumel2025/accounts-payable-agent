@@ -99,7 +99,7 @@ unavailable, 6 unusable message, 7 transient, 8 deadline.
 
 | Check | Result |
 |---|---|
-| Full backend suite (`pytest -m "not requires_paddle" --ignore=tests/unit/test_paddleocr_adapter.py`, local PostgreSQL 16 with TLS) | **1549 passed**, 31 deselected, 0 failed (244 s) |
+| Full backend suite (`pytest -m "not requires_paddle" --ignore=tests/unit/test_paddleocr_adapter.py`, local PostgreSQL 16 with TLS) | **1560 passed**, 31 deselected, 0 failed (217 s) on `8efd09d` (before the pass-2 fixes; re-run result in §10) |
 | `tests/unit/test_m11e2_fargate_dispatcher.py` (mocked ECS/SQS, task entry point) | 57 passed |
 | `tests/unit/test_m11e2_deploy_scripts.py` (stub aws/sam/docker) | 38 passed |
 | `tests/unit/test_m11e1_aws_templates.py` (policy mutation tests) | 32 passed |
@@ -181,7 +181,39 @@ export AWS_REGION=eu-west-2 CLERK_PUBLISHABLE_KEY='pk_...' CLERK_ISSUER='https:/
   stack in place (the dispatcher Lambda shares this image, so it is refreshed too) and still passes no `FrontendOrigin`. Continue
   with the identity mapping (runbook §7), `deploy.sh pass2` and the smoke tests.
 
-## 10. Is it safe to attempt another real pass 1?
+## 10. Real AWS findings from pass 2 (three live defects)
+
+Pass 2 deployed; the authenticated frontend recognised the Clerk user and organisation but showed *Backend unavailable*, the API log
+group stayed empty, and two helper scripts misbehaved. All three are fixed here; nothing else changed.
+
+1. **API Function URL permission (the cause of *Backend unavailable*).** Since October 2025 a Function URL call needs *both*
+   `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`; `WebRole` held only the first, so the SigV4 request was refused before the
+   API ran. Fix: a second, separate `WebRole` statement `InvokeApiFunctionViaUrl` — `lambda:InvokeFunction` on exactly
+   `!GetAtt ApiFunction.Arn`, only when `Bool lambda:InvokedViaFunctionUrl = "true"`. The existing `InvokeFunctionUrl` statement
+   (`lambda:FunctionUrlAuthType = AWS_IAM`) is unchanged; no resource, principal or action was broadened. The policy verifier and tests
+   fail if either action, either condition or the single-resource scoping disappears, if a second `InvokeFunction` statement is added,
+   or if any other role gains `lambda:InvokeFunction`.
+2. **`invoke-migration.sh identity …`.** `jq -cn '…' --args "$@"` let `--tenant-key` be parsed as a jq option. The payload is now
+   built as `jq -cn --args '{action:"identity",args:$ARGS.positional}' -- "$@"`. Tests (stub `aws`) assert exact argument order and
+   verbatim delivery of `--tenant-key/--display-name`, `register` with UUID/org/user/role, values with spaces, jq-option look-alikes
+   (`--help`, `-n`, `--args`, a literal `--`) and shell metacharacters — nothing is evaluated by a shell and no secret is involved.
+3. **`smoke.sh` forged-header status.** Production is correct: the inbound `x-ap-agent-clerk-authorization` header is stripped and,
+   with no real Clerk session, the route policy answers **401 `AUTHENTICATION_REQUIRED`** (403 `ORGANIZATION_REQUIRED` is for a
+   signed-in user without an active organisation; `frontend/src/lib/auth/route-access.ts`). `smoke.sh` now sends the forged header,
+   expects 401 and asserts the safe body contains `AUTHENTICATION_REQUIRED`.
+
+**Redeploy** (CloudShell; the image does not change, only the template and scripts):
+
+```bash
+cd ~/accounts-payable-agent && git pull origin claude/great-bardeen-w8wwlz && cd deploy/aws/scripts
+export AWS_REGION=eu-west-2 CLERK_PUBLISHABLE_KEY='pk_...' CLERK_ISSUER='https://<instance>.clerk.accounts.dev'
+./preflight.sh && ./deploy.sh pass2 && ./smoke.sh
+```
+
+IAM changes propagate within a minute or so; then reload the frontend. The still-unverified part is that the real Function URL now
+accepts the call (only a live request can show it).
+
+## 11. Is it safe to attempt another real pass 1?
 
 Yes, subject to `./preflight.sh` printing "Preflight passed" (no `BLOCK` line) — in particular the Fargate quota and the
 `ROLLBACK_COMPLETE` check — and the stack-only cleanup of the failed stack first. The cheapest rollback is

@@ -179,7 +179,7 @@ Authenticated hosted acceptance (a person with an invited Clerk test user; uses 
 | 1–2 | Public URL loads; anonymous visitors are redirected to Clerk sign-in | open `FrontendUrl` in a private window |
 | 3 | A mapped organization member sees the interface | sign in as the operator |
 | 4 | Auditor can view, cannot upload | sign in as the auditor: *Operations* shows no upload action / the API answers 403 `ACTION_NOT_PERMITTED` |
-| 5 | Forged tenant/role/alternate headers fail | `smoke.sh` covers the unauthenticated forms; with a valid session, headers added in browser dev-tools change nothing |
+| 5 | Forged tenant/role/alternate headers fail | `smoke.sh` covers the unauthenticated forms (a forged `x-ap-agent-clerk-authorization` header with no session is **401** `AUTHENTICATION_REQUIRED`; **403** `ORGANIZATION_REQUIRED` is a signed-in user without an active organisation); with a valid session, headers added in browser dev-tools change nothing |
 | 6 | Cross-organization access fails | as another organization's member, open the first tenant's job URL → 404 |
 | 7–8 | A valid invoice (up to 10 MB) uploads via the staged S3 flow and the request returns without OCR | upload on *Operations*; the page shows *Accepted and queued* within seconds; the browser's network tab shows `POST …/upload-intents`, a direct POST to `*.amazonaws.com`, then `…/finalize` |
 | 9–10 | SQS dispatches; a Fargate task runs real PaddleOCR and the message is deleted only after it exits 0 | `./observe-queue.sh` while the job runs: one RUNNING task, then a STOPPED task with `exit: 0`; the `/ecs/ap-agent-production-ocr` log shows `worker task: PROCESSED.`; the job timeline shows *Worker started* |
@@ -243,6 +243,13 @@ aws ecs describe-tasks --cluster "$C" --tasks <task-arn> --query 'tasks[].{statu
   creating a second job.
 * Alarms (SNS topic `ap-agent-production-alarms`): DLQ not empty, oldest message > 30 min, dispatcher errors, a job
   > 13 min end to end, API/web errors.
+
+### Troubleshooting: *Backend unavailable* with an empty API log group
+
+The frontend loads and signs you in, but every data call fails and `/aws/lambda/ap-agent-production-api` has no events: the call
+never reached the API. A Function URL needs **both** `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` on the web role
+(`InvokeApiFunctionUrl` and `InvokeApiFunctionViaUrl` in `template.yaml`); check with
+`aws iam get-role-policy --role-name <WebRole> --policy-name web`, and redeploy with `./deploy.sh pass2` if the second statement is missing.
 
 ### Troubleshooting the Fargate path
 

@@ -316,6 +316,24 @@ def verify_application_template(template: dict[str, Any], *, raw_text: str = "")
     if len(invoke) != 1 or not _mentions(invoke[0]["Resource"], "ApiFunction"):
         problems.append("WebRole: must be allowed to invoke exactly the API Function URL")
 
+    # Function URLs created since October 2025 need BOTH lambda:InvokeFunctionUrl and lambda:InvokeFunction. Each is a separate
+    # statement on exactly the API function, and each is restricted (auth type AWS_IAM / invoked via a Function URL).
+    via_url = [s for s in _statements(roles["WebRole"]) if "lambda:InvokeFunction" in (s["Action"] if isinstance(s["Action"], list) else [s["Action"]])]
+
+    if len(via_url) != 1 or not _mentions(via_url[0]["Resource"], "ApiFunction") or via_url[0].get("Effect") != "Allow":
+        problems.append("WebRole: must hold exactly one lambda:InvokeFunction statement, on the API function only")
+    elif via_url[0].get("Condition") != {"Bool": {"lambda:InvokedViaFunctionUrl": "true"}}:
+        problems.append("WebRole: lambda:InvokeFunction must be restricted to Function URL invocations (lambda:InvokedViaFunctionUrl true)")
+    elif isinstance(via_url[0]["Resource"], list) or via_url[0]["Resource"] != {"Fn::GetAtt": ["ApiFunction", "Arn"]}:
+        problems.append("WebRole: lambda:InvokeFunction must name only the API function ARN")
+
+    if len(invoke) == 1 and invoke[0].get("Condition") != {"StringEquals": {"lambda:FunctionUrlAuthType": "AWS_IAM"}}:
+        problems.append("WebRole: lambda:InvokeFunctionUrl must stay restricted to FunctionUrlAuthType AWS_IAM")
+
+    for name in ("ApiRole", "DispatcherRole", "OcrExecutionRole", "OcrTaskRole", "MigrateRole"):
+        if "lambda:InvokeFunction" in role_text(name):
+            problems.append(f"{name}: only the frontend role may invoke the API")
+
     for name in ("ApiRole", "DispatcherRole", "OcrExecutionRole", "OcrTaskRole", "MigrateRole"):
         if "lambda:InvokeFunctionUrl" in role_text(name):
             problems.append(f"{name}: only the frontend role may invoke the API")

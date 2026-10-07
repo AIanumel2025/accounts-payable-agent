@@ -268,6 +268,16 @@ Resources:
                 Condition:
                   StringEquals:
                     "lambda:FunctionUrlAuthType": AWS_IAM
+              # Since October 2025 a Function URL call needs BOTH lambda:InvokeFunctionUrl and lambda:InvokeFunction; without
+              # this statement the frontend's SigV4 request is refused before the API runs (its log group stays empty).
+              # Same single resource, and only when the invocation arrives through a Function URL.
+              - Sid: InvokeApiFunctionViaUrl
+                Effect: Allow
+                Action: "lambda:InvokeFunction"
+                Resource: !GetAtt ApiFunction.Arn
+                Condition:
+                  Bool:
+                    "lambda:InvokedViaFunctionUrl": "true"
               - Sid: Secrets
                 Effect: Allow
                 Action: "ssm:GetParameter"
