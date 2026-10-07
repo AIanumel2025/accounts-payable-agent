@@ -251,6 +251,14 @@ never reached the API. A Function URL needs **both** `lambda:InvokeFunctionUrl` 
 (`InvokeApiFunctionUrl` and `InvokeApiFunctionViaUrl` in `template.yaml`); check with
 `aws iam get-role-policy --role-name <WebRole> --policy-name web`, and redeploy with `./deploy.sh pass2` if the second statement is missing.
 
+### Troubleshooting: `unsupported startup parameter in options: statement_timeout`
+
+Every API call (including `/health/ready`) fails and the API log shows `psycopg.OperationalError … unsupported startup parameter in
+options`. The runtime DSN points at Neon's **pooled** endpoint, which refuses startup options; images built before M11E.3 send
+`statement_timeout`/`lock_timeout` that way. Rebuild `api`, `migrate` and `worker` from a commit that includes
+`src/ap_agent/db/connection.py` as of M11E.3 (it applies the limits transaction-locally on pooled endpoints) and redeploy — exact
+steps in `docs/m11e2_fargate_ocr_correction.md` §11. Do **not** "fix" this by switching the runtime DSN to the direct endpoint.
+
 ### Troubleshooting the Fargate path
 
 | Symptom | Look at | Typical cause |

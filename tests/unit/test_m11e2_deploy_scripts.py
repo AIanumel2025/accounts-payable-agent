@@ -466,3 +466,49 @@ def test_the_forged_header_is_still_sent_and_the_script_asserts_401_not_403():
 
     assert "x-ap-agent-clerk-authorization: Bearer forged" in text and '"$forged" 401' in text
     assert 'check "forged server-to-server header is refused' in text and "403" not in text.split("forged=")[1].split("rm -f")[0]
+
+
+# -- record-image.sh: record an image built elsewhere (CodeBuild) by digest, leaving the others untouched --------------------------
+
+
+def _record(tree, tmp_path, *args, rules=None):
+    stub = StubAws(tmp_path, rules if rules is not None else [{"args": ["sts"], "out": "111122223333\n"}, {"args": ["ecr", "describe-images"], "out": DIGEST + "\n"}])
+    _write_images(stub)
+    return _run(tree, stub, "record-image.sh", *args), stub
+
+
+def _recorded(stub):
+    return dict(line.split("=", 1) for line in (stub.directory / "state" / "images.env").read_text().splitlines())
+
+
+def test_record_image_resolves_a_tag_to_a_digest_and_keeps_every_other_image(tree, tmp_path):
+    result, stub = _record(tree, tmp_path, "worker", "abc123def456")
+    recorded = _recorded(stub)
+
+    assert result.returncode == 0, result.stderr
+    assert recorded["WORKER_IMAGE_URI"] == f"{REGISTRY}/ap-agent-production/worker@{DIGEST}"
+    assert {key: value for key, value in recorded.items() if key != "WORKER_IMAGE_URI"} == {f"{k}_IMAGE_URI": v for k, v in IMAGES.items() if k != "WORKER"}
+    assert (stub.directory / "state" / "images.env.bak").read_text().count("\n") == 4  # previous file kept
+    assert "111122223333" not in result.stdout + result.stderr  # the account id is never printed
+    assert stub.calls_of("aws", "describe-images")[0][stub.calls_of("aws", "describe-images")[0].index("--image-ids") + 1] == "imageTag=abc123def456"
+
+
+def test_record_image_accepts_a_digest_and_verifies_it_exists(tree, tmp_path):
+    result, stub = _record(tree, tmp_path, "migrate", "sha256:" + "b" * 64)
+
+    assert result.returncode == 0 and "imageDigest=sha256:" + "b" * 64 in " ".join(stub.calls_of("aws", "describe-images")[0])
+
+
+@pytest.mark.parametrize("name,ref", [("bogus", "t"), ("worker", ""), ("worker", "sha256:xyz"), ("worker", "bad tag!"), ("worker", "$(id)"), ("worker", "../x")])
+def test_record_image_rejects_bad_input_without_touching_anything(tree, tmp_path, name, ref):
+    result, stub = _record(tree, tmp_path, name, ref)
+
+    assert result.returncode != 0
+    assert _recorded(stub) == {f"{k}_IMAGE_URI": v for k, v in IMAGES.items()} and stub.calls_of("aws", "describe-images") == []
+
+
+def test_record_image_fails_without_changing_the_file_when_the_image_is_missing(tree, tmp_path):
+    rules = [{"args": ["sts"], "out": "111122223333\n"}, {"args": ["ecr", "describe-images"], "rc": 254, "err": "ImageNotFoundException"}]
+    result, stub = _record(tree, tmp_path, "worker", "nope", rules=rules)
+
+    assert result.returncode != 0 and _recorded(stub) == {f"{k}_IMAGE_URI": v for k, v in IMAGES.items()}

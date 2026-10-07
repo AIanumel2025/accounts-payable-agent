@@ -213,7 +213,87 @@ export AWS_REGION=eu-west-2 CLERK_PUBLISHABLE_KEY='pk_...' CLERK_ISSUER='https:/
 IAM changes propagate within a minute or so; then reload the frontend. The still-unverified part is that the real Function URL now
 accepts the call (only a live request can show it).
 
-## 11. Is it safe to attempt another real pass 1?
+## 11. Real AWS finding: a Neon pooled endpoint rejects startup options (M11E.3)
+
+With the frontend/API permissions fixed, a real request failed inside the API:
+
+```
+psycopg.OperationalError: ERROR: unsupported startup parameter in options: statement_timeout.
+Please use unpooled connection or remove this parameter from the startup package.
+```
+
+The runtime DSN is correct (least-privilege runtime role, the **pooled** endpoint — required by the transport policy).
+
+* **Cause.** `ap_agent.db.connection.open_connection` (and `create_connection_pool`) always passed
+  `options="-c statement_timeout=… -c lock_timeout=…"` to `psycopg.connect`. A transaction-pooled endpoint (PgBouncer) refuses
+  every startup option it does not track, so *every* database call failed — the readiness probe, Clerk identity resolution, the
+  dashboard, the operations API and the Fargate worker all go through `open_connection`. Local/CI databases accept startup
+  options, so nothing caught it.
+* **Fix (`src/ap_agent/db/connection.py`, nothing else in the application).**
+  * Pooled endpoint (host contains `-pooler`): **no startup options**. Right after connecting, `apply_transaction_timeouts` runs
+    parameterised `set_config('statement_timeout', %s, TRUE)` and `set_config('lock_timeout', %s, TRUE)` (the transaction-local
+    form, like `set_tenant_context`) and **reads them back from `pg_settings`**; any mismatch raises
+    `PostgresConfigurationError` and the connection is never yielded. They end with the transaction, so they cannot reach
+    another transaction, request or tenant through the pooler. Session-level `SET` is never used.
+  * Direct endpoint: unchanged — the same startup options, nothing extra executed (the owner/migration DSN is direct).
+  * The transport policy is unchanged: the runtime DSN must still be the pooled endpoint; production traffic was **not** moved
+    to the direct DSN.
+  * `create_connection_pool` now **fails closed** on a pooled endpoint (a client-side pool reuses a connection across many
+    transactions, which transaction-local limits cannot cover). Nothing consumes that pool and the AWS deployment already sets
+    `AP_AGENT_API_DISABLE_CONNECTION_POOL=true`, so behaviour is unchanged there.
+  * Invariant relied upon (and enforced by a test scanning `src/`): every database call is one `open_connection` = one
+    transaction; nothing commits, rolls back, switches to autocommit or connects around `open_connection` mid-connection.
+* **Tests.** `tests/unit/test_m11e3_pooled_connection.py` emulates the pooler's rejection (the pre-fix implementation, copied
+  into the test, raises exactly the observed error; the fixed one connects), and pins: no startup options when pooled, the
+  unchanged options when direct, transaction-local parameterised verified limits, no leakage between transactions, rollback
+  discards them, unverified limits fail closed, the transport policy and the pool refusal. `tests/api/test_m11e3_pooled_postgres.py`
+  forces the pooled path against real PostgreSQL through the runtime role and proves: both limits are active and the statement
+  timeout really fires; after COMMIT/ROLLBACK and on a fresh connection the server defaults are back; tenant context and RLS
+  (own-tenant visibility, cross-tenant write refused) are unchanged; and that Clerk identity resolution, the dashboard/review
+  repository, the operations API paths, the Fargate worker paths (`peek_job`, `claim_job`), the readiness probe and the
+  migration runner all work on it, each with no startup options.
+* **New script.** `deploy/aws/scripts/record-image.sh` records an image built elsewhere (CodeBuild) in `images.env` by digest,
+  verifying it exists in ECR and leaving the other entries untouched (tested with stub CLIs).
+
+**Redeploy** (only `api`, `migrate` — which the dispatcher shares — and `worker` contain `src/ap_agent`; `web` does not):
+
+```bash
+# 0. update the checkout and set the usual variables (no secrets are typed here)
+cd ~/accounts-payable-agent && git pull origin claude/great-bardeen-w8wwlz && cd deploy/aws/scripts
+export AWS_REGION=eu-west-2 CLERK_PUBLISHABLE_KEY='pk_...' CLERK_ISSUER='https://<instance>.clerk.accounts.dev'
+TAG="$(git rev-parse --short=12 HEAD)"; FULL="$(git rev-parse HEAD)"; export IMAGE_TAG="$TAG"
+
+# 1. the small images that contain src/ap_agent (the dispatcher shares the migrate image). web is a Next.js image: unchanged.
+./build-and-push.sh api migrate          # records both BY DIGEST in .local/images.env; the other recorded URIs are kept
+
+# 2. the large worker image: build it in AWS CodeBuild (CloudShell's disk is too small). Use your existing worker build project
+#    (it must build docker/worker.lambda.Dockerfile at this commit and push ap-agent-production/worker:$TAG).
+aws codebuild start-build --project-name <your-worker-build-project> --source-version "$FULL" \
+  --environment-variables-override name=IMAGE_TAG,value="$TAG",type=PLAINTEXT --query 'build.id' --output text
+#    wait until it reports SUCCEEDED (replace <build-id> with the id printed above):
+until [ "$(aws codebuild batch-get-builds --ids <build-id> --query 'builds[0].buildStatus' --output text)" != IN_PROGRESS ]; do sleep 20; done
+aws codebuild batch-get-builds --ids <build-id> --query 'builds[0].buildStatus' --output text      # must print SUCCEEDED
+
+# 3. record the worker image by digest, safely (verifies it exists in ECR, replaces only WORKER_IMAGE_URI, keeps images.env.bak)
+./record-image.sh worker "$TAG"
+cat ../.local/images.env | sed -E 's#^([A-Z]+_IMAGE_URI=)[^@:]*(/[^@]*)@(sha256:.{12}).*#\1<registry>\2@\3...#'   # shows names + digests only
+
+# 4. redeploy pass 2 (updates the API, dispatcher/migrate functions and the OCR task definition; no FrontendOrigin change)
+./preflight.sh && ./deploy.sh pass2
+```
+
+Verify (the frontend URL is `aws cloudformation describe-stacks --stack-name ap-agent-production --query "Stacks[0].Outputs[?OutputKey=='FrontendUrl'].OutputValue" --output text`):
+
+1. **Health through the frontend.** Signed in to the frontend in your browser, open `<FrontendUrl>api/backend/health`. Expected: JSON with `"status":"SUCCEEDED"`. (Anonymous requests correctly get 401.)
+2. **Dashboard.** In the same session open `<FrontendUrl>api/backend/api/v1/dashboard`. Expected: JSON with `"status":"SUCCEEDED"` (an empty dashboard for a new tenant is fine) — not *Backend unavailable*.
+3. **No pooler error.** `aws logs tail /aws/lambda/ap-agent-production-api --since 15m | grep -c "unsupported startup parameter"` must print `0`, and the log should show the requests.
+4. **Smoke.** `./smoke.sh` — every line `ok`.
+5. **One real invoice end to end.** Upload one invoice on *Operations*; then `./observe-queue.sh` until a task shows `exit: 0` (one RUNNING task, then a STOPPED task with exit 0), `aws logs tail /ecs/ap-agent-production-ocr --since 30m` shows `worker task: PROCESSED.`, the queue and DLQ are empty, and the job ends *completed* or *review required* in the interface (nothing about `statement_timeout`, `unsupported startup parameter` or `WORKER_INTERRUPTED`). Work it through review as in §8.
+
+Unverified until you run it: that the real pooler accepts the transaction-local `set_config` calls and the `pg_settings`
+read-back (both are ordinary statements PgBouncer forwards), and the end-to-end behaviour above.
+
+## 12. Is it safe to attempt another real pass 1?
 
 Yes, subject to `./preflight.sh` printing "Preflight passed" (no `BLOCK` line) — in particular the Fargate quota and the
 `ROLLBACK_COMPLETE` check — and the stack-only cleanup of the failed stack first. The cheapest rollback is
