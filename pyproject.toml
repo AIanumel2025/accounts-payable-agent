@@ -87,6 +87,12 @@ s3 = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The migration runner reads these files relative to the installed `ap_agent.db` package (`migration_runner.py`,
+# MIGRATIONS_DIRECTORY). `db/migrations/` is a plain directory (no __init__.py), so it must be listed explicitly or a wheel /
+# container install silently omits it (the editable install and pytest's pythonpath=["src"] mask the defect).
+[tool.setuptools.package-data]
+ap_agent = ["db/migrations/*.sql"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

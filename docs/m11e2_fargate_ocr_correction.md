@@ -143,7 +143,45 @@ image-pull time, the `AWS_REGION` environment inside the task, dispatcher timing
 mapping with FIFO, the Fargate vCPU quota, SigV4 on the Function URL, real Clerk/Neon behaviour and the authenticated
 acceptance list (runbook §8). Passing CI proves the template is well-formed and policy-compliant, not that it deploys.
 
-## 9. Is it safe to attempt another real pass 1?
+## 9. Real AWS finding: the migration SQL files were missing from the installed package
+
+After this milestone's correction a **real pass 1 reached `CREATE_COMPLETE`** (the Fargate/dispatcher design deployed). The
+first migration invocation then failed **before any database access**:
+
+```
+FileNotFoundError: /opt/venv/lib/python3.11/site-packages/ap_agent/db/migrations/0001_memory_schema_bootstrap.sql
+```
+
+* **Cause.** `migration_runner.MIGRATIONS_DIRECTORY` is `Path(__file__).parent / "migrations"`, but `db/migrations/` is a plain
+  directory (no `__init__.py`) and `pyproject.toml` did not list the `.sql` files as package data, so the built wheel — hence the
+  container image, which installs the project into `/opt/venv` — contained **zero** SQL files (verified: the wheel built from the
+  previous head has none). Local pytest (`pythonpath = ["src"]`) and editable installs read the source tree and masked it; the
+  image smoke test only imported the handler and never called `load_all_migrations()`.
+* **No database mutation occurred.** The loader fails before `open_connection`; the migration DSN was never read and no
+  statement ran. Nothing was applied, so no `schema_migrations` row exists yet.
+* **Fix (nothing else changed).** `[tool.setuptools.package-data] ap_agent = ["db/migrations/*.sql"]` in `pyproject.toml`. No SQL
+  content, migration ID, expected checksum or execution behaviour was touched; the Fargate worker, API, frontend and schema are
+  unchanged.
+* **Regression tests.** `tests/unit/test_m11e2_migration_packaging.py` builds the wheel, asserts it contains exactly the five
+  manifest-referenced files byte-for-byte, installs it into an isolated directory and runs
+  `scripts/check_installed_migrations.py` against the *installed* copy (five migrations, IDs in manifest order, every checksum equal
+  to the immutable manifest); mutation tests remove each file in turn (and alter one) and require the check to fail. The CI
+  `images (migrate)` job runs the same script **inside the built image** against `/opt/venv/.../site-packages`, including the
+  per-file removal mutation.
+* **Redeploy** (CloudShell, from the repository root, same shell variables as the first deployment): rebuild only the migration
+  image, update the existing pass-1 stack, then migrate:
+
+```bash
+cd ~/accounts-payable-agent && git pull origin claude/great-bardeen-w8wwlz && cd deploy/aws/scripts
+export AWS_REGION=eu-west-2 CLERK_PUBLISHABLE_KEY='pk_...' CLERK_ISSUER='https://<instance>.clerk.accounts.dev'
+./build-and-push.sh migrate && ./preflight.sh && ./deploy.sh pass1 && ./invoke-migration.sh migrate
+```
+
+  `build-and-push.sh migrate` records a new image digest and keeps the other recorded URIs; `deploy.sh pass1` updates the existing
+  stack in place (the dispatcher Lambda shares this image, so it is refreshed too) and still passes no `FrontendOrigin`. Continue
+  with the identity mapping (runbook §7), `deploy.sh pass2` and the smoke tests.
+
+## 10. Is it safe to attempt another real pass 1?
 
 Yes, subject to `./preflight.sh` printing "Preflight passed" (no `BLOCK` line) — in particular the Fargate quota and the
 `ROLLBACK_COMPLETE` check — and the stack-only cleanup of the failed stack first. The cheapest rollback is

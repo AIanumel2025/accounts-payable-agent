@@ -13,6 +13,7 @@ on:
       - "docker/*.lambda.Dockerfile"
       - "scripts/verify_aws_templates.py"
       - "scripts/benchmark_worker.py"
+      - "scripts/check_installed_migrations.py"
       - "tests/support/m11e2_stubs.py"
       - "tests/unit/test_m11e1_aws_templates.py"
       - "tests/unit/test_m11e2_*.py"
@@ -172,6 +173,22 @@ jobs:
           assert handler({'action': 'nope'}, None)['error'] == 'ACTION_NOT_SUPPORTED'
           assert handler({'action': 'migrate'}, None)['ok'] is False
           print('ok')"
+
+      - name: Migration image - every migration SQL file is in the INSTALLED package (site-packages), with the manifest checksums
+        if: matrix.image == 'migrate'
+        run: |
+          # Executes against /opt/venv/lib/python3.11/site-packages inside the image, never the repository source tree.
+          docker run --rm -v "$PWD/scripts/check_installed_migrations.py:/check.py:ro" --entrypoint python \
+            ap-agent-migrate-lambda:ci /check.py --require-installed | tee /tmp/migrations.out
+          grep -q "OK: 5 migrations loaded from /opt/venv/lib/python3.11/site-packages/ap_agent/db/migrations" /tmp/migrations.out
+          echo '### migrate image: load_all_migrations()' >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"; cat /tmp/migrations.out >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # Mutation: with ONE SQL file removed from the installed package the same check must fail (for every file).
+          for name in 0001_memory_schema_bootstrap 0002_operational_memory_tables 0003_matched_invoice_memory 0004_durable_operations 0005_identity_mappings; do
+            if docker run --rm -v "$PWD/scripts/check_installed_migrations.py:/check.py:ro" --entrypoint sh ap-agent-migrate-lambda:ci -c \
+                 "rm /opt/venv/lib/python3.11/site-packages/ap_agent/db/migrations/${name}.sql && python /check.py --require-installed"; then
+              echo "::error::the check passed although ${name}.sql was removed"; exit 1
+            fi
+          done
 
       - name: Dispatcher - the migration image serves the Fargate dispatcher handler without any OCR library
         if: matrix.image == 'migrate'

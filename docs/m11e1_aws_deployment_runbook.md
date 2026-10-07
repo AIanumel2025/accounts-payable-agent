@@ -137,6 +137,13 @@ revokes its write access to the identity tables).
 ```
 
 It exits non-zero and changes nothing further if the DSN is missing or a migration checksum no longer matches.
+
+> **Known first-deployment failure (fixed in M11E.2).** If this invocation reports
+> `FileNotFoundError: …/site-packages/ap_agent/db/migrations/0001_memory_schema_bootstrap.sql`, the migration image was built
+> from a commit that predates the packaging fix (the SQL files were not package data). Nothing touched the database. Update
+> to the fixed commit and rebuild only that image: `git pull && ./build-and-push.sh migrate && ./preflight.sh && ./deploy.sh pass1`
+> (or `pass2` if already past pass 1), then re-run `./invoke-migration.sh migrate`. Details: `docs/m11e2_fargate_ocr_correction.md` §9.
+> To check an image yourself: `docker run --rm -v "$PWD/scripts/check_installed_migrations.py:/check.py:ro" --entrypoint python <migrate-image> /check.py --require-installed`.
 Re-running is safe (applied migrations are skipped) but is only needed after an upgrade that adds migrations.
 
 ## 7. Register the production tenant and the first members
