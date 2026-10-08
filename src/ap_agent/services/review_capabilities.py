@@ -31,6 +31,7 @@ from ap_agent.models.interface import (
     interface_permissions_for_role,
 )
 from ap_agent.models.normalization import InvoiceFieldName
+from ap_agent.models.review_evidence import EVIDENCE_TYPE_SOURCE_DOCUMENT, generic_evidence_option
 from ap_agent.services.review_commands import (
     ACTIONS_REQUIRING_NOTES,
     ACTIONS_REQUIRING_REASON_CODES,
@@ -135,7 +136,10 @@ def _resume_capability(
 ) -> dict[str, Any]:
     decisions = detail.review_decisions
     latest = decisions[-1] if decisions else None
-    already_requested = any(event.event_type == RESUME_REQUESTED_EVENT_TYPE for event in detail.timeline)
+    # M11E.6: "already requested" belongs to the CURRENT decision of the CURRENT review case. The workflow timeline is not
+    # consulted: a resume requested for an earlier review case of the same workflow (a downstream case is opened when the
+    # resumed stages still need review) must not make this case permanently ineligible.
+    already_requested = latest is not None and str(latest.decision_id) in context.resume_requested_decision_ids
 
     reason: Optional[str] = None
 
@@ -161,6 +165,29 @@ def _resume_capability(
         "decision_id": None if latest is None else latest.decision_id,
         "ineligible_reason": reason,
     }
+
+
+def _evidence_options(context: ReviewCommandContext) -> tuple[dict[str, Any], ...]:
+    """Safe structured descriptions of exactly the evidence ids a correction may cite (`available_evidence_reference_ids`).
+
+    The source-document option (case-bound, M11E.5) comes first. An id without a stored description is still offered, with a
+    generic label; an option whose id is not in the available set is never offered (options cannot widen what is accepted)."""
+
+    described = {option.reference_id: option for option in context.evidence_options}
+    available = list(context.available_evidence_reference_ids)
+    ordered = [i for i in available if described.get(i) is not None and described[i].evidence_type == EVIDENCE_TYPE_SOURCE_DOCUMENT]
+    ordered += [i for i in available if i not in ordered]
+
+    return tuple(
+        {
+            "reference_id": reference_id,
+            "evidence_type": (option := described.get(reference_id) or generic_evidence_option(reference_id)).evidence_type,
+            "label": option.label,
+            "page_number": option.page_number,
+            "snippet": option.snippet,
+        }
+        for reference_id in ordered
+    )
 
 
 def build_command_capabilities(
@@ -214,10 +241,11 @@ def build_command_capabilities(
     )
 
     header_values = dict(context.header_field_values)
+    # M11E.4: every header field the deployment explicitly allows is offered, including one the extractor never produced
+    # (current_value null) -- otherwise a genuinely missing value, e.g. SUPPLIER_NAME_MISSING, could never be supplied.
     correctable_headers = tuple(
-        {"field_name": field_name, "current_value": header_values[field_name]}
+        {"field_name": field_name, "current_value": header_values.get(field_name)}
         for field_name in config.correctable_header_fields
-        if field_name in header_values
     )
     line_values = tuple(
         {"line_number": line_number, "field_name": field_name, "current_value": value}
@@ -240,6 +268,7 @@ def build_command_capabilities(
             "line_numbers": context.known_invoice_line_numbers,
             "line_values": line_values,
             "evidence_reference_ids": context.available_evidence_reference_ids,
+            "evidence_options": _evidence_options(context),
             "require_reason": config.require_correction_reason,
             "require_evidence": config.require_correction_evidence,
         },

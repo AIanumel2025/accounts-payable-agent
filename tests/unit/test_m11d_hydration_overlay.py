@@ -153,7 +153,7 @@ def test_overlay_corrects_a_line_field_and_creates_a_missing_one(phases):
 @pytest.mark.parametrize(
     ("correction", "code"),
     [
-        ({"field_name": "SUPPLIER_ADDRESS", "previous_value": None}, "OVERLAY_TARGET_INVALID"),  # header field absent
+        ({"field_name": "SUPPLIER_ADDRESS", "previous_value": "forged"}, "OVERLAY_PREVIOUS_VALUE_MISMATCH"),  # absent header: insertion only (M11E.4)
         ({"field_name": "LINE_QUANTITY", "line_number": 9, "previous_value": "1"}, "OVERLAY_TARGET_INVALID"),
         ({"field_name": "TOTAL_AMOUNT", "line_number": 1}, "OVERLAY_TARGET_INVALID"),
         ({"field_name": "NOT_A_FIELD"}, "OVERLAY_TARGET_INVALID"),

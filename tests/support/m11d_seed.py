@@ -101,9 +101,14 @@ def make_normalization_result(
     header: Optional[dict[InvoiceFieldName, tuple[Any, NormalizedValueType]]] = None,
     line: Optional[dict[str, Any]] = None,
     seed: str = "clean",
+    omit_header: tuple[InvoiceFieldName, ...] = (),
 ) -> NormalizationResult:
     header_values = dict(CLEAN_HEADER)
     header_values.update(header or {})
+
+    for omitted in omit_header:  # a field the extractor never produced (no record at all)
+        header_values.pop(omitted, None)
+
     line_values = dict(CLEAN_LINE)
     line_values.update(line or {})
 
@@ -180,6 +185,7 @@ def seed_pipeline_workflow(
     line: Optional[dict[str, Any]] = None,
     source_sha256: Optional[str] = None,
     seed: Optional[str] = None,
+    omit_header: tuple[InvoiceFieldName, ...] = (),
 ) -> SeededWorkflow:
     seed = seed or uuid.uuid4().hex
     batch_id = uuid.uuid4()
@@ -187,7 +193,8 @@ def seed_pipeline_workflow(
     source_sha256 = source_sha256 or uuid.uuid5(uuid.NAMESPACE_URL, f"m11d-seed-source/{seed}").hex * 2
 
     normalization = make_normalization_result(
-        batch_id=batch_id, document_id=document_id, source_sha256=source_sha256, header=header, line=line, seed=seed
+        batch_id=batch_id, document_id=document_id, source_sha256=source_sha256, header=header, line=line, seed=seed,
+        omit_header=omit_header,
     )
 
     normalization_config = NormalizationConfig(artifact_root=work_directory / "seed-phase4")

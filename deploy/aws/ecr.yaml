@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Accounts payable agent -- container image repositories (M11E.1). Deployed first, separately from template.yaml, so
+  images can be pushed before the application stack references them. Lifecycle rules keep storage costs near zero.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedPattern: "^[a-z][a-z0-9-]{1,14}$"
+  KeepImages:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 20
+    Description: Number of most recent images kept per repository (older ones are expired automatically).
+
+Resources:
+  WebRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "ap-agent-${Environment}/web"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      EncryptionConfiguration: { EncryptionType: AES256 }
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {"rules":[
+            {"rulePriority":1,"description":"expire untagged after 1 day","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":1},"action":{"type":"expire"}},
+            {"rulePriority":2,"description":"keep the last ${KeepImages} images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":${KeepImages}},"action":{"type":"expire"}}
+          ]}
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  ApiRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "ap-agent-${Environment}/api"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      EncryptionConfiguration: { EncryptionType: AES256 }
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {"rules":[
+            {"rulePriority":1,"description":"expire untagged after 1 day","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":1},"action":{"type":"expire"}},
+            {"rulePriority":2,"description":"keep the last ${KeepImages} images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":${KeepImages}},"action":{"type":"expire"}}
+          ]}
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  WorkerRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "ap-agent-${Environment}/worker"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      EncryptionConfiguration: { EncryptionType: AES256 }
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {"rules":[
+            {"rulePriority":1,"description":"expire untagged after 1 day","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":1},"action":{"type":"expire"}},
+            {"rulePriority":2,"description":"keep the last ${KeepImages} images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":${KeepImages}},"action":{"type":"expire"}}
+          ]}
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+  MigrateRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "ap-agent-${Environment}/migrate"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      EncryptionConfiguration: { EncryptionType: AES256 }
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {"rules":[
+            {"rulePriority":1,"description":"expire untagged after 1 day","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":1},"action":{"type":"expire"}},
+            {"rulePriority":2,"description":"keep the last ${KeepImages} images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":${KeepImages}},"action":{"type":"expire"}}
+          ]}
+      Tags:
+        - { Key: Project, Value: accounts-payable-agent }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: cloudformation }
+
+Outputs:
+  WebRepositoryUri: { Value: !GetAtt WebRepository.RepositoryUri }
+  ApiRepositoryUri: { Value: !GetAtt ApiRepository.RepositoryUri }
+  WorkerRepositoryUri: { Value: !GetAtt WorkerRepository.RepositoryUri }
+  MigrateRepositoryUri: { Value: !GetAtt MigrateRepository.RepositoryUri }

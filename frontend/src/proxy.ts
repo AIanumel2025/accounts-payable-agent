@@ -1,6 +1,7 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { decideAccess } from "@/lib/auth/route-access";
+import { stripReservedInboundHeaders } from "@/lib/auth/reserved-headers";
 import { isClerkAuthMode } from "@/lib/config/auth-mode";
 
 /**
@@ -14,6 +15,15 @@ import { isClerkAuthMode } from "@/lib/config/auth-mode";
  * FastAPI independently verifies the session token and maps it to a tenant and
  * role in its own database.
  */
+
+/**
+ * Continues to the application with the reserved server-to-server headers removed from the request
+ * (M11E.1): a browser can never smuggle `x-ap-agent-clerk-authorization` -- or the prototype identity
+ * headers -- into any route handler or page. The Next.js server builds its own upstream identity.
+ */
+function passThrough(request: NextRequest) {
+  return NextResponse.next({ request: { headers: stripReservedInboundHeaders(request.headers) } });
+}
 
 const clerkGate = clerkMiddleware(async (auth, request) => {
   const { userId, orgId } = await auth();
@@ -35,7 +45,7 @@ const clerkGate = clerkMiddleware(async (auth, request) => {
     );
   }
 
-  return NextResponse.next();
+  return passThrough(request);
 }, () => {
   // Optional networkless verification key (Clerk "JWT public key", PEM) and the front-end origins
   // permitted to mint session tokens (`azp`) -- both verified again by FastAPI.
@@ -50,7 +60,7 @@ const clerkGate = clerkMiddleware(async (auth, request) => {
 });
 
 export default function proxy(request: NextRequest, event: NextFetchEvent) {
-  if (!isClerkAuthMode()) return NextResponse.next();
+  if (!isClerkAuthMode()) return passThrough(request);
   return clerkGate(request, event);
 }
 

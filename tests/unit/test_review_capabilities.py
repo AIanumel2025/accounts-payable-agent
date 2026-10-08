@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -137,19 +138,22 @@ def test_resume_requires_the_deciding_reviewer_and_is_one_shot():
     other = _caps(actor=_actor(actor_id="rev-2"), context=context, detail=_detail([decision]))
     assert other["resume"]["ineligible_reason"] == "DECISION_ACTOR_MISMATCH"
 
-    requested = InterfaceTimelineEvent(
-        event_id="e", event_type="WORKFLOW_RESUME_REQUESTED", stage=None, status="IN_PROGRESS",
-        actor_id="rev-1", message="m", occurred_at=NOW,
-    )
-    done = _caps(context=context, detail=_detail([decision], [requested]))
+    # M11E.6: one-shot per DECISION -- the durable association is the decision id carried by the context.
+    requested = replace(context, resume_requested_decision_ids=(str(decision.decision_id),))
+    done = _caps(context=requested, detail=_detail([decision]))
     assert done["resume"]["already_requested"] is True
     assert done["resume"]["ineligible_reason"] == "RESUME_ALREADY_REQUESTED"
 
 
-def test_correction_policy_lists_only_present_header_fields_and_exact_values():
+def test_correction_policy_lists_every_configured_header_field_with_exact_current_values():
+    # M11E.4: absent fields are offered too (current_value null) -- but only those explicitly configured.
     caps = _caps()
     headers = {item["field_name"]: item["current_value"] for item in caps["correction_policy"]["header_fields"]}
-    assert headers == {InvoiceFieldName.INVOICE_NUMBER: None, InvoiceFieldName.TOTAL_AMOUNT: "100.10"}
+    configured = default_interface_config().correctable_header_fields
+    assert set(headers) == set(configured) and [item["field_name"] for item in caps["correction_policy"]["header_fields"]] == list(configured)
+    assert headers[InvoiceFieldName.TOTAL_AMOUNT] == "100.10"  # exact string, not coerced
+    assert headers[InvoiceFieldName.INVOICE_NUMBER] is None
+    assert headers[InvoiceFieldName.SUPPLIER_NAME] is None  # never extracted: insertable
     assert caps["correction_policy"]["line_numbers"] == (1, 2)
 
 

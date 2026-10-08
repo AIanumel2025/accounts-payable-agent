@@ -50,10 +50,12 @@ export interface FormattedConfidence {
   ariaLabel: string;
 }
 
-const LOW_CONFIDENCE_THRESHOLD = 0.7;
+const LOW_CONFIDENCE_THRESHOLD = 70;
 
 /**
- * Confidence is a proportion in [0, 1] or `null` when the extractor never
+ * Confidence follows the backend contract: a percentage on a 0-100 scale
+ * (99.99 -> "99.99%", 100 -> "100%"; M11E.4 -- it was wrongly treated as a
+ * proportion and rendered 9999%), or `null` when the extractor never
  * produced one -- distinct from a low-but-present confidence (task §8B:
  * "distinguish low confidence from missing confidence").
  */
@@ -66,7 +68,7 @@ export function formatConfidence(confidence: number | null | undefined): Formatt
       ariaLabel: `Confidence ${MISSING_VALUE_LABEL.toLowerCase()}`,
     };
   }
-  const percent = Math.round(confidence * 100);
+  const percent = Number(confidence.toFixed(2)); // at most two decimals, no trailing zeros
   return {
     display: `${percent}%`,
     isMissing: false,

@@ -342,9 +342,9 @@ describe("correction editor (task §13)", () => {
       await userEvent.click(row.getByRole("checkbox", { name: new RegExp(evidence) }));
     };
 
-    await fill(0, "H:TOTAL_AMOUNT", "100.100", "ev-total-1");
+    await fill(0, "H:TOTAL_AMOUNT", "100.100", "Total Amount"); // checkboxes are named by their label, not the UUID
     await userEvent.click(screen.getByRole("button", { name: /add another correction/i }));
-    await fill(1, "L:1:LINE_QUANTITY", "6", "ev-po-1");
+    await fill(1, "L:1:LINE_QUANTITY", "6", "Purchase Order Number");
     await userEvent.click(screen.getByRole("checkbox", { name: /verified against evidence/i }));
     await userEvent.click(screen.getByRole("button", { name: /review and submit correction/i }));
 
@@ -368,7 +368,10 @@ describe("correction editor (task §13)", () => {
     await openEditor();
     await userEvent.selectOptions(screen.getByLabelText(/field to correct/i), "H:PURCHASE_ORDER_NUMBER");
     const evidence = within(screen.getByRole("group", { name: /supporting evidence/i })).getAllByRole("checkbox");
-    expect(evidence.map((box) => box.parentElement?.textContent)).toEqual(["ev-po-1 (attached to this field)", "ev-total-1"]);
+    expect(evidence.map((box) => box.closest("label")?.textContent)).toEqual([
+      "Extracted evidence — Purchase Order Number, page 1 (attached to this field) — PO 99",
+      "Extracted evidence — Total Amount",
+    ]);
   });
 
   it("lets a correction row be removed", async () => {
@@ -407,7 +410,7 @@ describe("correction editor (task §13)", () => {
     await userEvent.selectOptions(row.getByLabelText(/field to correct/i), "H:PURCHASE_ORDER_NUMBER");
     await userEvent.type(row.getByLabelText(/corrected value/i), "99A");
     await userEvent.type(row.getByLabelText(/reason for this correction/i), "Verified PO number");
-    await userEvent.click(row.getByRole("checkbox", { name: /ev-po-1/ }));
+    await userEvent.click(row.getByRole("checkbox", { name: /Purchase Order Number/ }));
     await userEvent.click(screen.getByRole("checkbox", { name: /verified against evidence/i }));
     await userEvent.click(screen.getByRole("button", { name: /review and submit correction/i }));
     await userEvent.click(within(await screen.findByRole("dialog", { name: /submit these corrections/i })).getByRole("button", { name: /submit corrections/i }));
@@ -430,6 +433,17 @@ describe("workflow resume panel (task §15)", () => {
       action: "RESUME_WORKFLOW", disposition: "APPROVED", reason_codes: ["REVIEW_COMPLETED"], notes: null, corrections: [],
       observed_review_revision: 2, observed_workflow_revision: 3,
     });
+  });
+
+  it("M11E.6: a second review case's own decision shows the panel (an earlier case's resume does not hide it)", async () => {
+    // The server scopes `already_requested` to this case's decision; the payload for a downstream case therefore reads eligible.
+    const { submit } = setup(resumeCapabilities("APPROVED", {
+      resume: { eligible: true, already_requested: false, disposition: "APPROVED", decision_id: "99999999-9999-4999-8999-999999999999", ineligible_reason: null },
+    }));
+    const panel = screen.getByTestId("resume-panel");
+    await userEvent.click(within(panel).getByRole("button", { name: /request workflow resume/i }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    expect(lastRequest(submit)).toMatchObject({ action: "RESUME_WORKFLOW", disposition: "APPROVED" });
   });
 
   it("submits the stored CORRECTED disposition", async () => {

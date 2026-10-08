@@ -12,6 +12,7 @@ import {
   parseCommandSuccess,
 } from "@/lib/commands/contract";
 import { CSRF_HEADER, isSameOriginRequest, verifyCsrfToken } from "@/lib/server/csrf";
+import { upstreamFetch } from "@/lib/server/upstream";
 
 /**
  * The single, server-side review-command boundary (M11C task §7).
@@ -44,7 +45,7 @@ export function defaultBoundaryDeps(): BoundaryDeps {
   return {
     loadMode: () => loadCommandMode(),
     loadEnv: () => loadServerEnvConfig(),
-    fetchImpl: (input, init) => fetch(input, init),
+    fetchImpl: (input, init) => upstreamFetch(String(input), init),
     now: () => new Date(),
     verifyCsrf: (token, reviewCaseId) => verifyCsrfToken(token, reviewCaseId),
     authHeaders: (config, now) => getBackendAuthHeaders(config, now),

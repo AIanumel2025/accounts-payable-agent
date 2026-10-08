@@ -54,6 +54,17 @@ class WorkerRunner:
         if job is None:
             return None
 
+        return self.execute_claimed(job)
+
+    @property
+    def operations(self) -> OperationsRepository:
+        return self._operations
+
+    def execute_claimed(self, job: WorkflowJob) -> WorkflowJob:
+        """Run an already-claimed (`RUNNING`) job to a terminal state. Shared
+        by the polling loop and the queue-driven (Lambda) worker, so both
+        record unexpected failures identically."""
+
         try:
             return self._executors[job.job_type].execute(job)
         except Exception as error:  # noqa: BLE001 - the worker must survive any single job

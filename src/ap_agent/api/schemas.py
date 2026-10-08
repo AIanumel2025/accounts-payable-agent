@@ -51,6 +51,8 @@ from ap_agent.models.orchestration import InvoiceWorkflowStatus, OrchestrationSt
 from ap_agent.services.review_queries import ReviewQueuePage
 
 __all__ = [
+    "UploadIntentRequest",
+    "UploadIntentResponse",
     "ApiEnvelope",
     "HealthResponse",
     "DashboardResponse",
@@ -77,6 +79,7 @@ __all__ = [
     "AvailableAction",
     "ResumeCapabilityResponse",
     "CommandCapabilitiesResponse",
+    "EvidenceOptionResponse",
     "JobSummaryResponse",
     "JobResponse",
     "JobEventResponse",
@@ -574,12 +577,24 @@ class CorrectableLineValue(_StrictModel):
     current_value: Optional[str]
 
 
+class EvidenceOptionResponse(_StrictModel):
+    """One evidence choice a correction may cite (M11E.5). Only `reference_id` is ever sent back in a command; the rest is
+    display metadata. Carries no object-store key, path, host name, credential or tenant identifier."""
+
+    reference_id: str
+    evidence_type: Literal["SOURCE_DOCUMENT", "EXTRACTED_FIELD", "FINANCIAL_CHECK"]
+    label: str
+    page_number: Optional[int] = None
+    snippet: Optional[str] = None
+
+
 class CorrectionPolicyResponse(_StrictModel):
     header_fields: tuple[CorrectableHeaderField, ...]
     line_fields: tuple[InvoiceFieldName, ...]
     line_numbers: tuple[int, ...]
     line_values: tuple[CorrectableLineValue, ...]
     evidence_reference_ids: tuple[str, ...]
+    evidence_options: tuple[EvidenceOptionResponse, ...]
     require_reason: bool
     require_evidence: bool
 
@@ -746,3 +761,26 @@ class JobListResponse(_StrictModel):
 class SubmissionResponse(_StrictModel):
     job: JobResponse
     idempotent_replay: bool
+
+
+class UploadIntentRequest(_StrictModel):
+    """Declared properties of the file the browser is about to upload
+    straight to object storage (M11E.1). Identity is never in the body."""
+
+    filename: str
+    media_type: str
+    byte_size: int
+    sha256: str
+
+
+class UploadIntentResponse(_StrictModel):
+    """A short-lived presigned POST for one exact staging object. The URL and
+    fields are the only storage detail the browser ever sees; they carry no
+    credential beyond the one-shot signed policy."""
+
+    intent_id: UUID
+    upload_url: str
+    upload_fields: dict[str, str]
+    upload_expires_at: datetime
+    finalize_expires_at: datetime
+    maximum_bytes: int

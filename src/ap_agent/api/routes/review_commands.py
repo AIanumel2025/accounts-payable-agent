@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
 
 from ap_agent.api.config import ApiConfig
 from ap_agent.api.dependencies import AuthenticatedActor, get_api_config, get_interface_config, get_review_repository
@@ -51,7 +51,10 @@ from ap_agent.models.interface import (
     ReviewFieldCorrection,
     interface_utc_now,
 )
+from ap_agent.models.operations import WorkflowJobType
+from ap_agent.repositories.operations_repository import OperationsRepository
 from ap_agent.repositories.review_repository import ReviewRepository
+from ap_agent.services.job_dispatch import dispatch_if_queued
 from ap_agent.services.review_commands import execute_assignment_command, review_command_fingerprint, validate_review_command
 from ap_agent.services.review_decisions import execute_decision_command
 from ap_agent.services.review_capabilities import build_command_capabilities
@@ -125,6 +128,7 @@ def get_review_command_capabilities(
     responses=_ERROR_RESPONSES,
 )
 def submit_review_command(
+    request: Request,
     command_request: ApiReviewCommandRequest,
     actor: AuthenticatedActor,
     review_case_id: UUID = Path(description="Human-review case identifier"),
@@ -240,6 +244,18 @@ def submit_review_command(
 
     if result.status not in {InterfaceCommandStatus.ACCEPTED, InterfaceCommandStatus.IDEMPOTENT}:
         raise ReviewCommandRejectedError(result.errors, result.message)
+
+    if is_resume:
+        # M11E.1: the resume job was committed with the handoff; wake a worker
+        # for it (no-op unless an external queue is configured). Looked up by
+        # the command's idempotency key so an idempotent replay re-dispatches
+        # a job whose first dispatch failed.
+        resume_job = OperationsRepository(
+            request.app.state.postgres_dsn, request.app.state.memory_config
+        ).find_job_by_idempotency(actor.tenant_id, WorkflowJobType.RESUME_WORKFLOW, command.idempotency_key)
+
+        if resume_job is not None:
+            dispatch_if_queued(request.app.state.job_dispatcher, resume_job)
 
     return ApiEnvelope(
         request_id=uuid4(),

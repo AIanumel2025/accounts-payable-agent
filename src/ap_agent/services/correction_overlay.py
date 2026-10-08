@@ -9,9 +9,12 @@ value, reason and cited evidence. This module applies it to a **new**
 Rules (each violation raises `ResumeIntegrityError`, before any downstream
 stage runs):
 
-  - targets are exact: a known header field present in the record, or a
-    known line number (a line sub-field that was never extracted may be
-    supplied; nothing else is invented);
+  - targets are exact: a known header field, or a known line number (a line
+    sub-field that was never extracted may be supplied). M11E.4: a header
+    field the extractor never produced (e.g. a missing SUPPLIER_NAME) may be
+    INSERTED, only with `previous_value` null; it is appended to the derived
+    record with the field's canonical value type, human-review provenance,
+    confidence 100 and no review flag. Nothing else is invented;
   - duplicate or structurally invalid targets are rejected;
   - `previous_value` must equal the stored value, and a reason and evidence
     references are required (they are recorded on the corrected field as
@@ -45,7 +48,7 @@ from ap_agent.models.normalization import (
 )
 from ap_agent.serialization.memory_json import optional_text
 
-__all__ = ["parse_overlay", "apply_correction_overlay", "corrected_field_names"]
+__all__ = ["parse_overlay", "apply_correction_overlay", "corrected_field_names", "header_value_type"]
 
 _LINE_FIELD_ATTRIBUTES = {
     InvoiceFieldName.LINE_DESCRIPTION: "description",
@@ -62,6 +65,35 @@ _DEFAULT_VALUE_TYPES = {
 }
 
 _HUMAN_CONFIDENCE = 100.0
+
+# Canonical value type of a header field inserted by a reviewer. Mirrors `ap_agent.tools.normalization.normalize_candidate_value`
+# (a test asserts they agree for every header field), kept local so this module stays free of the tools layer.
+_MONETARY_HEADER_FIELDS = {
+    InvoiceFieldName.SUBTOTAL,
+    InvoiceFieldName.TAX_AMOUNT,
+    InvoiceFieldName.DISCOUNT_AMOUNT,
+    InvoiceFieldName.SHIPPING_AMOUNT,
+    InvoiceFieldName.TOTAL_AMOUNT,
+}
+_DATE_HEADER_FIELDS = {InvoiceFieldName.INVOICE_DATE, InvoiceFieldName.DUE_DATE}
+
+
+def header_value_type(field_name: InvoiceFieldName) -> Optional[NormalizedValueType]:
+    """The canonical value type of a header field, or None for a line sub-field (not a header)."""
+
+    if field_name in _LINE_FIELD_ATTRIBUTES:
+        return None
+
+    if field_name in _MONETARY_HEADER_FIELDS:
+        return NormalizedValueType.DECIMAL
+
+    if field_name in _DATE_HEADER_FIELDS:
+        return NormalizedValueType.DATE
+
+    if field_name == InvoiceFieldName.CURRENCY:
+        return NormalizedValueType.CURRENCY_CODE
+
+    return NormalizedValueType.TEXT
 
 
 def parse_overlay(correction_overlay_json: str) -> dict[str, Any]:
@@ -135,7 +167,11 @@ def _corrected_field(
     correction: dict[str, Any],
     evidence_ids: list[str],
 ) -> NormalizedInvoiceField:
-    value_type = original.value_type if original is not None else _DEFAULT_VALUE_TYPES.get(field_name)
+    value_type = (
+        original.value_type
+        if original is not None
+        else _DEFAULT_VALUE_TYPES.get(field_name) or header_value_type(field_name)
+    )
 
     if value_type is None:
         raise ResumeIntegrityError("OVERLAY_TARGET_INVALID")
@@ -198,6 +234,7 @@ def apply_correction_overlay(
     seen: set[tuple[str, Optional[int]]] = set()
     new_header_fields = dict(header_fields)
     new_line_items = dict(line_items)
+    inserted_header_fields: list[InvoiceFieldName] = []
 
     for correction in overlay["corrections"]:
         if not isinstance(correction, dict):
@@ -247,8 +284,20 @@ def apply_correction_overlay(
             )
             new_line_items[line_number] = dataclasses.replace(line, **{attribute: corrected})
         else:
-            if line_number is not None or field_name not in header_fields:
+            if line_number is not None:
                 raise ResumeIntegrityError("OVERLAY_TARGET_INVALID")
+
+            if field_name not in header_fields:
+                # M11E.4: insert a header field the extractor never produced -- only as an insertion (previous_value null).
+                if correction.get("previous_value") is not None:
+                    raise ResumeIntegrityError("OVERLAY_PREVIOUS_VALUE_MISMATCH")
+
+                new_header_fields[field_name] = _corrected_field(
+                    original=None, field_name=field_name, line_item_id=None,
+                    decision_id=decision_id, correction=correction, evidence_ids=evidence_ids,
+                )
+                inserted_header_fields.append(field_name)
+                continue
 
             original_field = header_fields[field_name]
 
@@ -262,7 +311,9 @@ def apply_correction_overlay(
 
     corrected_record = dataclasses.replace(
         record,
-        fields=tuple(new_header_fields[field.field_name] for field in record.fields),
+        # existing fields keep their order; inserted ones are appended (append-only), in the order they were corrected
+        fields=tuple(new_header_fields[field.field_name] for field in record.fields)
+        + tuple(new_header_fields[name] for name in inserted_header_fields),
         line_items=tuple(new_line_items[line.line_number] for line in record.line_items),
         review_required=False,
         review_reasons=tuple(),

@@ -8,7 +8,7 @@ A modular, audit-friendly accounts payable agent that processes invoice PDFs and
 
 The system extracts invoice data, validates financial relationships, matches invoices against supplier, purchase-order, and goods-receipt records, and routes each invoice either to automatic completion or human review.
 
-> **Project status:** Validated engineering prototype. The document-processing, memory, and orchestration layers are complete. The API and user interface are the next development milestones.
+> **Project status:** Deployed hosted MVP. The authenticated Next.js dashboard, FastAPI API, Neon PostgreSQL memory, private S3 document storage, SQS queue, and on-demand PaddleOCR worker are live on AWS in `eu-west-2`. Infrastructure smoke tests and the authenticated dashboard path are green; the first production invoice acceptance run is the remaining go-live check.
 
 ## What the system does
 
@@ -32,6 +32,11 @@ The agent currently supports:
 - Deterministic workflow orchestration.
 - Bounded concurrent batch processing.
 - Automatic completion or human-review routing.
+- Clerk organization authentication and database-backed tenant/role mapping.
+- A hosted Next.js dashboard, review queue, invoice detail, and operations console.
+- Direct-to-private-S3 uploads with server-side validation before processing.
+- SQS FIFO dispatch to a scale-to-zero ECS Fargate PaddleOCR worker.
+- Controlled reviewer corrections and restart-stage workflow resumption.
 
 The agent does **not** currently initiate payments, post invoices into an ERP, or make an irreversible financial decision.
 
@@ -186,6 +191,12 @@ Real production throughput still depends on invoice complexity, OCR hardware, mo
 - Pytest
 - Docker and Docker Compose
 - GitHub Actions
+- FastAPI
+- Next.js 16 and TypeScript
+- Clerk Organizations
+- AWS Lambda and Lambda Function URLs
+- Amazon S3, SQS FIFO, ECS Fargate, ECR, SSM and CloudWatch
+- AWS SAM and CloudFormation
 
 ## Repository structure
 
@@ -208,10 +219,12 @@ accounts-payable-agent/
 │   ├── integration/       # Cross-phase and provider integration tests
 │   ├── support/           # Shared testing utilities
 │   └── unit/              # Isolated unit tests
-├── scripts/               # Migration and memory smoke-test commands
+├── scripts/               # Migration, verification and operational commands
+├── frontend/              # Next.js dashboard, review and operations interface
+├── deploy/aws/            # SAM/CloudFormation stack and deployment scripts
 ├── notebooks/             # Original development and validation notebook
-├── docs/                  # Modularisation and acceptance reports
-├── docker/                # Container initialisation resources
+├── docs/                  # Milestone, deployment and acceptance reports
+├── docker/                # Local and hosted container definitions
 ├── .github/workflows/     # Continuous-integration workflows
 ├── docker-compose.yml
 ├── Dockerfile
@@ -415,8 +428,9 @@ The Phase 9 review API (M10) lets an authorised user:
 - Accept, reject, or record a review decision (append-only).
 - Request a controlled workflow-resume handoff for a resolved case.
 
-A visual front end and payment/ERP-posting integration are out of scope for
-this milestone (see "Current limitations").
+The hosted Next.js interface exposes these review operations to authorised
+users. Payment execution and ERP posting remain deliberately outside the
+system boundary (see "Current limitations").
 
 ## Review API (M10)
 
@@ -560,12 +574,11 @@ verification); backend: `python -m pytest tests/api/test_m11c_review_actions_pos
 
 **Important:**
 
-- In M11C, workflow resume creates a **controlled handoff only** (restart stage +
-  derived version). M11D adds the worker that executes it (see below).
-- Authentication is still the M10 **prototype header adapter**. It is
-  **not production authentication**; M11C is **not approved for a public
-  write-enabled deployment**. Headers are built server-side and never come from
-  browser input. Production needs OIDC/JWT.
+- M11C originally created a controlled resume handoff; M11D added the worker
+  that executes it from the recorded restart stage (see below).
+- Local demonstrations may still use the clearly labelled prototype-header
+  adapter. The hosted deployment uses Clerk JWTs, active organizations and
+  database identity mappings; FastAPI verifies every session token independently.
 
 See `docs/m11c_review_actions_report.md` for the full report.
 
@@ -595,10 +608,11 @@ npm run demo:m11d -- --check  # smoke test
 npm run test:e2e:real-operations
 ```
 
-**M11D Core supports one active worker only** — no leases, heartbeats, crash
-recovery or dead-letter queue (M11E). Authentication is still the prototype
-header adapter; not for a public write-enabled deployment. No payment, bank or
-ERP action exists. See `docs/m11d_operations_console_report.md`.
+The original M11D Core demonstration supported one active local worker. The
+hosted AWS deployment now uses an SQS FIFO queue, dead-letter queue, a dispatcher
+Lambda and one on-demand ECS Fargate task per invoice, while preserving the
+atomic job claim and append-only resume guarantees. No payment, bank or ERP
+action exists. See `docs/m11d_operations_console_report.md`.
 
 ### Local development
 
@@ -637,59 +651,78 @@ report (architecture, design system, initial test results) and
 queue, invoice detail, the exact per-fixture acceptance baseline, and
 readiness for M11C).
 
-## Deployment direction
+## Live AWS deployment
 
-The recommended production-facing architecture is:
+The current hosted MVP is available at:
 
-- **Next.js and TypeScript** for the browser interface.
-- **FastAPI** for the application API.
-- **The existing Python package** for invoice processing and orchestration.
-- **PostgreSQL or Neon** for operational memory.
-- **Object storage** for documents and evidence images.
-- **OIDC authentication** for client identity and role management.
-- **A task queue and workers** for large asynchronous batches.
-- **OpenTelemetry-compatible logging and metrics** for observability.
+**[Open the Accounts Payable Agent dashboard](https://q25m7xmapbqehe5nh3qvg4cfka0zpxru.lambda-url.eu-west-2.on.aws/dashboard)**
 
-A low-code tool such as Base44 may be used for rapid UI demonstrations, but the Python package, PostgreSQL database, and API should remain the authoritative implementation.
+```text
+Browser
+  → public Next.js Lambda Function URL
+  → server-side Clerk session + AWS SigV4 boundary
+  → IAM-protected FastAPI Lambda Function URL
+  → Neon PostgreSQL (least-privilege runtime role + RLS)
+
+Invoice upload
+  → presigned POST to private S3
+  → API validation/finalisation
+  → SQS FIFO
+  → dispatcher Lambda
+  → one on-demand ECS Fargate PaddleOCR task
+  → PostgreSQL workflow memory
+  → completed or human review
+```
+
+Deployment characteristics:
+
+- AWS region: `eu-west-2`.
+- Public surface: the Next.js Function URL only; the FastAPI Function URL requires AWS IAM/SigV4.
+- Authentication: Clerk Organizations; FastAPI independently verifies the Clerk JWT.
+- Authorization: external organization/user mappings resolve to an internal tenant and role in PostgreSQL.
+- Documents: private S3 bucket with Block Public Access and tenant-scoped, content-addressed keys.
+- Processing: SQS FIFO plus a scale-to-zero Fargate worker (4 vCPU / 8 GB) running baked PaddleOCR models.
+- Database: Neon PostgreSQL through a least-privilege pooled runtime role; migrations use a separate owner/direct DSN.
+- Secrets: SSM SecureStrings loaded at runtime; no DSN or Clerk secret is included in the browser bundle or templates.
+- Cost controls: no NAT gateway, load balancer, RDS instance, always-on ECS service or provisioned concurrency.
+- Observability: CloudWatch logs, queue/DLQ inspection, alarms and deployment smoke checks.
+
+Verified live on 7 October 2026:
+
+- CloudFormation stack update completed successfully.
+- Every unauthenticated infrastructure/security smoke check passed.
+- The authenticated dashboard resolved the Clerk organization and `TENANT_ADMIN` role.
+- The Next.js-to-FastAPI SigV4 request path succeeded.
+- Neon pooled runtime queries succeeded with transaction-local statement and lock timeouts.
+- Dashboard health reported **Backend connected** and **Commands enabled**.
+- The first real uploaded-invoice run remains the final production acceptance check before PR #16 is merged.
 
 ## Current limitations
 
-This repository is not yet a complete production SaaS application.
+This is a hosted MVP, not yet an enterprise AP platform. Current boundaries include:
 
-Current limitations include:
+- The live deployment has one active OCR task at a time; horizontal worker scaling, leases and enterprise capacity testing are deferred.
+- Reference suppliers, purchase orders and goods receipts are controlled sample data and must be replaced with client-authoritative integrations.
+- No ERP posting, payment execution, bank transfer or irreversible financial action exists.
+- OCR/extraction quality is validated against controlled fixtures, not yet against a client-specific production evaluation set.
+- The Lambda Function URL is operational but a custom domain, WAF and enterprise edge controls are not yet configured.
+- Disaster-recovery exercises, formal penetration testing, retention-policy sign-off and sustained load testing remain outstanding.
+- The first real hosted invoice still needs to complete the final upload → S3 → queue → Fargate → review/resume acceptance run.
 
-- A FastAPI review API exists (M10), but only its prototype development/test
-  header authentication — no enterprise identity-provider integration yet.
-- No production visual web interface yet (the API is ready for one; see
-  "Review API (M10)").
-- No ERP posting connector yet.
-- No payment-execution capability (and no command can produce one — see
-  "Safety and reliability principles").
-- Reference repositories are controlled test fixtures.
-- Load testing has not yet established production capacity.
-- OCR accuracy has been validated only against the controlled fixture set.
-- Monitoring, alerting, and operational dashboards remain to be added.
-- Workflow resumption creates a controlled handoff only; nothing yet consumes
-  it to actually resume the Phase 1-8 pipeline outside a request.
-
-The system should not be treated as autonomous financial decision-making authority without client-specific controls, evaluation, security review, and human oversight.
+The system must remain human-supervised and client-configured before it is used for consequential financial operations.
 
 ## Roadmap
 
-Planned milestones include:
-
-1. ~~Build the FastAPI application layer.~~ Done (M10) — see "Review API (M10)".
-2. ~~Build the Next.js human-review interface.~~ Done (M11A–M11C) — read-only views plus controlled, opt-in review actions.
-3. Replace the prototype header authentication with a real identity provider
-   (OIDC/JWT) and full role-based access control.
-4. Add asynchronous jobs and worker queues (including consuming a Phase 9
-   workflow-resume handoff to actually resume the Phase 1-8 pipeline).
-5. Integrate supplier, PO, receipt, ERP, email, and storage systems.
-6. Add client-specific configuration and tenant onboarding.
-7. Add evaluation datasets and accuracy reporting.
-8. Add monitoring, tracing, alerting, and operational dashboards.
-9. Add an LLM reasoning layer for bounded ambiguity resolution.
-10. Conduct security, performance, and user-acceptance testing.
+1. ~~Build the FastAPI application layer.~~ Done (M10).
+2. ~~Build the Next.js human-review interface.~~ Done (M11A–M11C).
+3. ~~Add asynchronous upload, worker and workflow-resume operations.~~ Done (M11D).
+4. ~~Add production identity, private object storage and hosted deployment.~~ Done (M11E/M11E.1–M11E.3).
+5. Complete the first real hosted invoice acceptance run and merge PR #16.
+6. Replace sample reference data with supplier, PO, receipt, email and ERP connectors.
+7. Add client-specific evaluation datasets, extraction-quality reporting and acceptance thresholds.
+8. Add custom domain/WAF controls, tracing, operational dashboards and tested recovery procedures.
+9. Validate sustained batch throughput and introduce controlled horizontal worker scaling.
+10. Add a bounded LLM reasoning layer only where deterministic evidence is insufficient.
 
 Any LLM reasoning layer will remain subordinate to deterministic financial policies. It must not fabricate financial values, suppliers, purchase orders, or approval evidence.
 
@@ -710,6 +743,12 @@ Detailed milestone reports are available in the `docs/` directory:
 - [M11A frontend foundation](docs/m11a_frontend_foundation_report.md)
 - [M11B review queue and invoice detail](docs/m11b_review_queue_detail_report.md)
 - [M11C interactive review actions](docs/m11c_review_actions_report.md)
+- [M11D operations console](docs/m11d_operations_console_report.md)
+- [M11E hosted deployment](docs/m11e_hosted_deployment_report.md)
+- [M11E deployment runbook](docs/m11e_deployment_runbook.md)
+- [M11E.1 AWS go-live architecture](docs/m11e1_aws_go_live_report.md)
+- [M11E.1 AWS deployment runbook](docs/m11e1_aws_deployment_runbook.md)
+- [M11E.2/M11E.3 Fargate and Neon-pooler corrections](docs/m11e2_fargate_ocr_correction.md)
 
 ## Contributing
 
@@ -732,20 +771,26 @@ This project is licensed under the [MIT License](LICENSE).
 
 Created by [Tony Anumel](https://github.com/AIanumel2025).
 
-## Hosted deployment (M11E)
+## Alternative Render/R2 deployment path (M11E)
 
-A private, authenticated hosted version runs on Render: a public Next.js service, a private FastAPI service
-and one background OCR worker, with Clerk (Organizations) for sign-in, Cloudflare R2 for uploaded invoices and
-Neon for PostgreSQL. Clerk proves identity and the active organization; a database identity mapping (managed
-with `scripts/manage_identity_mappings.py`) decides the internal tenant and role. FastAPI verifies the Clerk
-session token itself.
+The repository retains a second deployment option based on Render, Cloudflare
+R2, Neon and Clerk. Its hosted-mode acceptance path is tested, but the live
+instance documented above currently runs on AWS. See
+[the M11E deployment runbook](docs/m11e_deployment_runbook.md) and
+[hosted deployment report](docs/m11e_hosted_deployment_report.md).
 
-* `render.yaml` – the Blueprint (checked by `scripts/verify_render_blueprint.py`); `docker/*.Dockerfile` – the
-  three production images.
-* `AP_AGENT_ENVIRONMENT=hosted` makes startup fail closed (no prototype headers, no local filesystem storage,
-  Clerk and S3 settings required).
-* Local development is unchanged (`prototype_headers`, local filesystem).
-* Local hosted-path acceptance (Clerk-style cookies, mocked S3, real PostgreSQL and worker):
-  `cd frontend && npm run test:e2e:hosted` (needs `AP_AGENT_TEST_POSTGRES_DSN`).
-* Setup, environment variables, migration, rollback and rotation: [docs/m11e_deployment_runbook.md](docs/m11e_deployment_runbook.md);
-  what was and was not verified: [docs/m11e_hosted_deployment_report.md](docs/m11e_hosted_deployment_report.md).
+## AWS deployment implementation (M11E.1–M11E.3)
+
+The AWS stack is managed with SAM/CloudFormation under `deploy/aws/`. It contains
+the public Next.js Lambda, IAM-protected FastAPI Lambda, private S3 bucket,
+SQS FIFO queue and DLQ, dispatcher and migration Lambdas, on-demand ECS Fargate
+OCR task, ECR repositories, SSM secret references, CloudWatch logs and alarms.
+
+Operational documentation:
+
+- [AWS deployment runbook](docs/m11e1_aws_deployment_runbook.md)
+- [AWS go-live architecture and security report](docs/m11e1_aws_go_live_report.md)
+- [Fargate OCR and Neon pooled-connection corrections](docs/m11e2_fargate_ocr_correction.md)
+
+PR #16 remains open until the first real invoice completes the live end-to-end
+acceptance path. The public URL exposes no payment-execution capability.

@@ -57,6 +57,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     pool = None
 
     try:
+        import os
+
+        # M11E.1: nothing consumes this pool (every repository call opens its own short-lived
+        # connection). On Lambda a frozen container would hold idle connections against Neon
+        # (defeating scale-to-zero), so the AWS deployment turns it off.
+        if os.environ.get("AP_AGENT_API_DISABLE_CONNECTION_POOL", "").strip().lower() in {"1", "true", "yes", "on"}:
+            raise RuntimeError("connection pool disabled")
+
         from ap_agent.db.connection import create_connection_pool
 
         pool = create_connection_pool(app.state.postgres_dsn, app.state.memory_config)
@@ -81,6 +89,8 @@ def create_app(
     api_config: Optional[ApiConfig] = None,
     clerk_verifier: Optional[object] = None,
     artifact_store: Optional[object] = None,
+    job_dispatcher: Optional[object] = None,
+    upload_staging: Optional[object] = None,
 ) -> FastAPI:
     """Build the Phase 9 review API. Every parameter is optional so the
     `uvicorn ap_agent.api.app:create_app --factory` launch command (task
@@ -89,6 +99,12 @@ def create_app(
     this directly with an explicit `dsn`/`memory_config` (e.g. the isolated
     `ap_agent_m8_test` database), never through the factory string.
     """
+
+    # M11E.1: on AWS, secrets are fetched from SSM Parameter Store at start-up
+    # (a no-op unless AP_AGENT_SSM_PARAMETERS is set) before any is read.
+    from ap_agent.aws.secrets import load_ssm_parameters_into_environment
+
+    load_ssm_parameters_into_environment()
 
     resolved_memory_config = memory_config or MemoryConfig()
 
@@ -148,6 +164,25 @@ def create_app(
             resolved_api_config.storage_mode,
             artifact_root=resolved_api_config.artifact_root,
             s3=resolved_api_config.s3,
+            aws_s3=resolved_api_config.aws_s3,
+        )
+
+    from ap_agent.services.job_dispatch import build_job_dispatcher
+
+    app.state.job_dispatcher = job_dispatcher or build_job_dispatcher(
+        resolved_api_config.queue_backend, resolved_api_config.sqs
+    )
+
+    from ap_agent.config.deployment import StorageMode
+
+    if resolved_api_config.enable_operations and resolved_api_config.storage_mode is StorageMode.AWS_S3:
+        # Native S3: browsers upload straight to a staging prefix (M11E.1).
+        from ap_agent.artifacts.s3 import build_aws_s3_client
+        from ap_agent.artifacts.s3_staging import S3UploadStaging
+
+        assert resolved_api_config.aws_s3 is not None
+        app.state.upload_staging = upload_staging or S3UploadStaging(
+            build_aws_s3_client(resolved_api_config.aws_s3), resolved_api_config.aws_s3.bucket
         )
 
     from ap_agent.config.deployment import describe_configuration_status

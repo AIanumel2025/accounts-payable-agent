@@ -74,6 +74,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operations/upload-intents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Upload Intent
+         * @description Step 1 of a staged direct upload: validate the declared file and return
+         *     a presigned POST. Nothing is stored or enqueued yet.
+         */
+        post: operations["create_upload_intent_api_v1_operations_upload_intents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operations/upload-intents/{intent_id}/finalize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finalize Upload Intent
+         * @description Step 3 of a staged direct upload: validate the stored object, create the
+         *     job and enqueue it. Idempotent per intent. Never runs OCR.
+         */
+        post: operations["finalize_upload_intent_api_v1_operations_upload_intents__intent_id__finalize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/review-cases": {
         parameters: {
             query?: never;
@@ -410,6 +452,27 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ApiEnvelope[UploadIntentResponse] */
+        ApiEnvelope_UploadIntentResponse_: {
+            data?: components["schemas"]["UploadIntentResponse"] | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+        };
         /**
          * ApiErrorEnvelope
          * @description Shape of every controlled error body (`ap_agent.api.errors`).
@@ -551,6 +614,8 @@ export interface components {
         };
         /** CorrectionPolicyResponse */
         CorrectionPolicyResponse: {
+            /** Evidence Options */
+            evidence_options: components["schemas"]["EvidenceOptionResponse"][];
             /** Evidence Reference Ids */
             evidence_reference_ids: string[];
             /** Header Fields */
@@ -594,6 +659,26 @@ export interface components {
             total_invoices: number;
             /** Unassigned Review Cases */
             unassigned_review_cases: number;
+        };
+        /**
+         * EvidenceOptionResponse
+         * @description One evidence choice a correction may cite (M11E.5). Only `reference_id` is ever sent back in a command; the rest is
+         *     display metadata. Carries no object-store key, path, host name, credential or tenant identifier.
+         */
+        EvidenceOptionResponse: {
+            /**
+             * Evidence Type
+             * @enum {string}
+             */
+            evidence_type: "SOURCE_DOCUMENT" | "EXTRACTED_FIELD" | "FINANCIAL_CHECK";
+            /** Label */
+            label: string;
+            /** Page Number */
+            page_number?: number | null;
+            /** Reference Id */
+            reference_id: string;
+            /** Snippet */
+            snippet?: string | null;
         };
         /** FinancialCheckResponse */
         FinancialCheckResponse: {
@@ -1086,6 +1171,52 @@ export interface components {
             /** Status */
             status: string;
         };
+        /**
+         * UploadIntentRequest
+         * @description Declared properties of the file the browser is about to upload
+         *     straight to object storage (M11E.1). Identity is never in the body.
+         */
+        UploadIntentRequest: {
+            /** Byte Size */
+            byte_size: number;
+            /** Filename */
+            filename: string;
+            /** Media Type */
+            media_type: string;
+            /** Sha256 */
+            sha256: string;
+        };
+        /**
+         * UploadIntentResponse
+         * @description A short-lived presigned POST for one exact staging object. The URL and
+         *     fields are the only storage detail the browser ever sees; they carry no
+         *     credential beyond the one-shot signed policy.
+         */
+        UploadIntentResponse: {
+            /**
+             * Finalize Expires At
+             * Format: date-time
+             */
+            finalize_expires_at: string;
+            /**
+             * Intent Id
+             * Format: uuid
+             */
+            intent_id: string;
+            /** Maximum Bytes */
+            maximum_bytes: number;
+            /**
+             * Upload Expires At
+             * Format: date-time
+             */
+            upload_expires_at: string;
+            /** Upload Fields */
+            upload_fields: {
+                [key: string]: string;
+            };
+            /** Upload Url */
+            upload_url: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1185,6 +1316,7 @@ export interface operations {
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
                 authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -1226,6 +1358,7 @@ export interface operations {
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
                 authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -1333,6 +1466,7 @@ export interface operations {
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
                 authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
             };
             path: {
                 /** @description Job identifier */
@@ -1444,6 +1578,7 @@ export interface operations {
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
                 authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -1457,6 +1592,229 @@ export interface operations {
                 };
             };
         };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_SubmissionResponse_"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden role, or operations are disabled. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unknown job. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Idempotency key reused with different content. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Request or file too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unsupported or inconsistent file type. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Invalid upload, filename, field or idempotency key. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Redacted internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_upload_intent_api_v1_operations_upload_intents_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+                "X-Actor-ID"?: string | null;
+                "X-Actor-Role"?: string | null;
+                "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UploadIntentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_UploadIntentResponse_"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden role, or operations are disabled. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unknown job. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Idempotency key reused with different content. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Request or file too large. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Unsupported or inconsistent file type. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Invalid upload, filename, field or idempotency key. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Redacted internal error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorEnvelope"];
+                };
+            };
+        };
+    };
+    finalize_upload_intent_api_v1_operations_upload_intents__intent_id__finalize_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+                "X-Actor-ID"?: string | null;
+                "X-Actor-Role"?: string | null;
+                "X-Authenticated-At"?: string | null;
+                authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
+            };
+            path: {
+                /** @description Upload intent identifier */
+                intent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             202: {
@@ -1567,6 +1925,7 @@ export interface operations {
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
                 authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -1602,6 +1961,7 @@ export interface operations {
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
                 authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
             };
             path: {
                 /** @description Human-review case identifier */
@@ -1640,6 +2000,7 @@ export interface operations {
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
                 authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
             };
             path: {
                 /** @description Human-review case identifier */
@@ -1732,6 +2093,7 @@ export interface operations {
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
                 authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
             };
             path: {
                 /** @description Human-review case identifier */
@@ -1828,6 +2190,7 @@ export interface operations {
                 "X-Actor-Role"?: string | null;
                 "X-Authenticated-At"?: string | null;
                 authorization?: string | null;
+                "X-AP-Agent-Clerk-Authorization"?: string | null;
             };
             path?: never;
             cookie?: never;

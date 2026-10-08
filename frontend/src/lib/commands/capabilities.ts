@@ -11,6 +11,7 @@ import type {
   CommandCapabilitiesPayload,
   CorrectableHeaderFieldPayload,
   CorrectableLineValuePayload,
+  EvidenceOptionPayload,
 } from "@/types/api-payloads";
 
 /**
@@ -40,6 +41,40 @@ function posInt(value: unknown): number | null {
 function nullableString(value: unknown): string | null | undefined {
   if (value === null) return null;
   return typeof value === "string" ? value : undefined;
+}
+
+const EVIDENCE_TYPES = ["SOURCE_DOCUMENT", "EXTRACTED_FIELD", "FINANCIAL_CHECK"] as const;
+const GENERIC_EVIDENCE_LABEL = "Evidence reference";
+
+/**
+ * Evidence choices (M11E.5). Each option is narrowed field by field; one that is malformed rejects the payload, and an option
+ * whose id is not among `evidence_reference_ids` is dropped (a label can never widen what the backend accepts). An id with no
+ * description (an older backend) is still offered, with a generic label -- never a bare UUID without context.
+ */
+function parseEvidenceOptions(raw: unknown, allowedIds: readonly string[]): EvidenceOptionPayload[] | null {
+  const described = new Map<string, EvidenceOptionPayload>();
+  if (raw !== undefined) {
+    if (!Array.isArray(raw)) return null;
+    for (const item of raw) {
+      if (!isRecord(item)) return null;
+      const evidenceType = oneOf(item.evidence_type, EVIDENCE_TYPES);
+      const page = item.page_number === null || item.page_number === undefined ? null : posInt(item.page_number);
+      const snippet = item.snippet === undefined ? null : nullableString(item.snippet);
+      if (
+        typeof item.reference_id !== "string" || item.reference_id === "" || evidenceType === null ||
+        typeof item.label !== "string" || item.label === "" ||
+        (item.page_number !== null && item.page_number !== undefined && page === null) || snippet === undefined
+      ) {
+        return null;
+      }
+      if (allowedIds.includes(item.reference_id) && !described.has(item.reference_id)) {
+        described.set(item.reference_id, { reference_id: item.reference_id, evidence_type: evidenceType, label: item.label, page_number: page, snippet });
+      }
+    }
+  }
+  return allowedIds.map(
+    (id) => described.get(id) ?? { reference_id: id, evidence_type: "EXTRACTED_FIELD" as const, label: GENERIC_EVIDENCE_LABEL, page_number: null, snippet: null },
+  );
 }
 
 export function parseCapabilities(raw: unknown): CommandCapabilitiesPayload | null {
@@ -87,7 +122,9 @@ export function parseCapabilities(raw: unknown): CommandCapabilitiesPayload | nu
   const lineFields = strings(policy.line_fields);
   const evidenceIds = strings(policy.evidence_reference_ids);
   const lineNumbers = Array.isArray(policy.line_numbers) ? policy.line_numbers.map(posInt) : null;
+  const evidenceOptions = evidenceIds === null ? null : parseEvidenceOptions(policy.evidence_options, evidenceIds);
   if (
+    evidenceOptions === null ||
     lineFields === null || evidenceIds === null || lineNumbers === null || lineNumbers.includes(null) ||
     typeof policy.require_reason !== "boolean" || typeof policy.require_evidence !== "boolean" ||
     !Array.isArray(policy.header_fields) || !Array.isArray(policy.line_values)
@@ -143,6 +180,7 @@ export function parseCapabilities(raw: unknown): CommandCapabilitiesPayload | nu
       line_numbers: lineNumbers.filter((n): n is number => n !== null),
       line_values: lineValues,
       evidence_reference_ids: evidenceIds,
+      evidence_options: evidenceOptions,
       require_reason: policy.require_reason,
       require_evidence: policy.require_evidence,
     },

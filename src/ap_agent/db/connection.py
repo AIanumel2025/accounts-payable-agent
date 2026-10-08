@@ -21,6 +21,10 @@ brief §4:
   (`redact_dsn`); every diagnostic below reports only non-secret transport
   metadata, matching the notebook's own "PostgreSQL DSN: REDACTED" /
   "Credentials in output: NONE" behaviour.
+- M11E.3: a transaction-pooled endpoint (Neon's `-pooler` host, i.e. PgBouncer in transaction mode) REJECTS startup
+  options (`unsupported startup parameter in options: statement_timeout`). For such endpoints the timeouts are not sent as
+  startup options; they are applied transaction-locally (`set_config(..., true)`) right after connecting and verified.
+  Direct endpoints keep the startup options unchanged. See `open_connection` / `create_connection_pool`.
 - `psycopg`/`psycopg_pool` are imported lazily, inside the functions that
   need them, not at module scope (CLAUDE.md).
 """
@@ -47,6 +51,9 @@ __all__ = [
     "inspect_transport",
     "verify_transport_policy",
     "connection_options",
+    "is_pooled_endpoint",
+    "startup_options",
+    "apply_transaction_timeouts",
     "open_connection",
     "create_connection_pool",
     "set_tenant_context",
@@ -170,13 +177,65 @@ def connection_options(config: MemoryConfig) -> str:
 
     Mirrors `psycopg.connect(..., prepare_threshold=None)` (task §4A:
     "Use `prepare_threshold=None` where needed for transaction-pooler
-    compatibility") applied by the caller alongside this.
+    compatibility") applied by the caller alongside this. Only valid for DIRECT (unpooled) endpoints: a
+    transaction-pooled endpoint rejects startup options (see `startup_options`).
     """
 
     return (
         f"-c statement_timeout={config.statement_timeout_milliseconds} "
         f"-c lock_timeout={config.lock_timeout_milliseconds}"
     )
+
+
+def is_pooled_endpoint(dsn: str) -> bool:
+    """True for a transaction-pooled endpoint (Neon's `-pooler` host)."""
+
+    return bool(inspect_transport(dsn)["pooled_endpoint"])
+
+
+def startup_options(dsn: str, config: MemoryConfig) -> str | None:
+    """The startup `options` for `dsn`: the timeouts for a direct endpoint, `None` for a pooled one.
+
+    A transaction pooler (PgBouncer) refuses every startup option it does not track
+    (`unsupported startup parameter in options: statement_timeout`), so nothing may be sent there.
+    """
+
+    return None if is_pooled_endpoint(dsn) else connection_options(config)
+
+
+_TIMEOUT_SETTINGS = (
+    ("statement_timeout", "statement_timeout_milliseconds"),
+    ("lock_timeout", "lock_timeout_milliseconds"),
+)
+
+
+def apply_transaction_timeouts(connection: "psycopg.Connection", config: MemoryConfig) -> None:
+    """Apply `statement_timeout` and `lock_timeout` for the CURRENT TRANSACTION ONLY and verify them.
+
+    Uses parameterised `set_config(name, value, true)`: the third argument makes the setting transaction-local, so it
+    disappears at COMMIT/ROLLBACK and can never leak, through a transaction pooler, into another transaction, request or
+    tenant (the same mechanism as `set_tenant_context`). This deliberately never uses a session-level `SET`.
+
+    The first statement on a psycopg connection opens its transaction, so calling this immediately after connecting makes the
+    limits govern every later statement of that connection's transaction. Every database call path in the application is one
+    connection = one transaction (`open_connection`); the repositories never commit mid-connection (a test enforces that).
+    Fails closed with `PostgresConfigurationError` if the read-back (from `pg_settings`, in milliseconds) does not match.
+    """
+
+    expected = {name: str(getattr(config, attribute)) for name, attribute in _TIMEOUT_SETTINGS}
+
+    with connection.cursor() as cursor:
+        for name, value in expected.items():
+            cursor.execute("SELECT set_config(%s, %s, TRUE);", (name, value))
+
+        cursor.execute(
+            "SELECT name, setting FROM pg_settings WHERE name = ANY(%s);",
+            (list(expected),),
+        )
+        active = {row[0]: row[1] for row in cursor.fetchall()}
+
+    if active != expected:
+        raise PostgresConfigurationError("The statement and lock timeouts were not applied to the transaction.")
 
 
 @contextmanager
@@ -186,19 +245,29 @@ def open_connection(dsn: str, config: MemoryConfig) -> Iterator["psycopg.Connect
     Verifies `config.transport_policy` before connecting. Never called at
     module-import time; always called explicitly by a repository or
     migration-runner function.
+
+    Direct endpoints receive the timeouts as startup options (unchanged). Pooled endpoints reject startup options, so they
+    receive none; the timeouts are instead applied transaction-locally and verified before the connection is yielded.
     """
 
     import psycopg
 
     verify_transport_policy(dsn, config.transport_policy)
 
-    with psycopg.connect(
-        dsn,
-        connect_timeout=config.connect_timeout_seconds,
-        prepare_threshold=None,
-        application_name=config.application_name,
-        options=connection_options(config),
-    ) as connection:
+    options = startup_options(dsn, config)
+    keywords: dict[str, Any] = {
+        "connect_timeout": config.connect_timeout_seconds,
+        "prepare_threshold": None,
+        "application_name": config.application_name,
+    }
+
+    if options is not None:
+        keywords["options"] = options
+
+    with psycopg.connect(dsn, **keywords) as connection:
+        if options is None:
+            apply_transaction_timeouts(connection, config)
+
         yield connection
 
 
@@ -209,11 +278,24 @@ def create_connection_pool(dsn: str, config: MemoryConfig):
     implemented"); the notebook opened one ad-hoc connection per call.
     Callers must `.open()`/use as a context manager and `.close()` the
     pool themselves; this function never connects.
+
+    M11E.3: refuses a transaction-pooled endpoint (fails closed with `PostgresConfigurationError`). A client-side pool reuses
+    connections across many transactions, and the timeouts could then only be enforced per transaction by the code that checks
+    a connection out; session-level settings would leak through the server-side transaction pooler. Nothing consumes the pool
+    (every repository call uses `open_connection`) and the AWS deployment already disables it, so refusing is the safe choice.
     """
 
     from psycopg_pool import ConnectionPool
 
     verify_transport_policy(dsn, config.transport_policy)
+
+    options = startup_options(dsn, config)
+
+    if options is None:
+        raise PostgresConfigurationError(
+            "A client-side connection pool is not supported on a transaction-pooled endpoint; "
+            "use open_connection (one transaction-local, verified connection per call)."
+        )
 
     return ConnectionPool(
         dsn,
@@ -223,7 +305,7 @@ def create_connection_pool(dsn: str, config: MemoryConfig):
         kwargs={
             "prepare_threshold": None,
             "application_name": config.application_name,
-            "options": connection_options(config),
+            "options": options,
         },
         open=False,
     )

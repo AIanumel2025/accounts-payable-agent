@@ -49,9 +49,13 @@ export const CorrectionEditor = forwardRef<HTMLFieldSetElement, Props>(function 
         const errors = validation?.rowErrors[row.id] ?? {};
         const rowId = `${groupId}-${row.id}`;
         const suggested = new Set(target ? (evidenceSuggestions[target.fieldName] ?? []) : []);
+        // Attached-to-this-field evidence first, then the original source invoice, then the rest. Labels only: the
+        // checkbox value (and everything sent in the command) is the opaque reference id.
+        const options = policy.evidence_options;
         const evidenceOrder = [
-          ...policy.evidence_reference_ids.filter((id) => suggested.has(id)),
-          ...policy.evidence_reference_ids.filter((id) => !suggested.has(id)),
+          ...options.filter((option) => suggested.has(option.reference_id)),
+          ...options.filter((option) => !suggested.has(option.reference_id) && option.evidence_type === "SOURCE_DOCUMENT"),
+          ...options.filter((option) => !suggested.has(option.reference_id) && option.evidence_type !== "SOURCE_DOCUMENT"),
         ];
 
         return (
@@ -119,23 +123,27 @@ export const CorrectionEditor = forwardRef<HTMLFieldSetElement, Props>(function 
                 <p className={styles.note}>No evidence references are available on this case.</p>
               ) : (
                 <div className={styles.evidenceList}>
-                  {evidenceOrder.map((id) => (
-                    <label key={id} className={styles.checkRow}>
-                      <input
-                        type="checkbox"
-                        checked={row.evidenceIds.includes(id)}
-                        onChange={(event) =>
-                          update(row.id, {
-                            evidenceIds: event.target.checked ? [...row.evidenceIds, id] : row.evidenceIds.filter((existing) => existing !== id),
-                          })
-                        }
-                      />
-                      <span>
-                        {id}
-                        {suggested.has(id) ? " (attached to this field)" : ""}
-                      </span>
-                    </label>
-                  ))}
+                  {evidenceOrder.map((option) => {
+                    const id = option.reference_id;
+                    return (
+                      <label key={id} className={styles.checkRow} data-evidence-type={option.evidence_type}>
+                        <input
+                          type="checkbox"
+                          checked={row.evidenceIds.includes(id)}
+                          onChange={(event) =>
+                            update(row.id, {
+                              evidenceIds: event.target.checked ? [...row.evidenceIds, id] : row.evidenceIds.filter((existing) => existing !== id),
+                            })
+                          }
+                        />
+                        <span>
+                          <strong>{option.label}</strong>
+                          {suggested.has(id) ? " (attached to this field)" : ""}
+                          {option.snippet ? <> &mdash; <q>{option.snippet}</q></> : null}
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
               )}
               {errors.evidence ? <p id={`${rowId}-evidence-error`} className={styles.fieldError}>{errors.evidence}</p> : null}

@@ -263,9 +263,11 @@ def validate_review_command(
             if correction.line_number is not None:
                 add_error("HEADER_CORRECTION_LINE_NUMBER_PROHIBITED")
 
-            if correction.field_name not in header_values:
-                add_error("HEADER_FIELD_NOT_PRESENT")
-            elif correction.previous_value != header_values[correction.field_name]:
+            # M11E.4: a configured header field the extractor never produced may be inserted, but only as an insertion:
+            # previous_value must be null (a forged previous value is refused). A present field must match what is stored.
+            expected_previous = header_values.get(correction.field_name)
+
+            if correction.previous_value != expected_previous:
                 add_error("PREVIOUS_VALUE_MISMATCH")
 
         elif correction.field_name in config.correctable_line_fields:

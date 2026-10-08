@@ -69,7 +69,7 @@ def build_runner(config, *, warm_up_ocr: bool = False):
     memory_config = MemoryConfig()
     dsn = load_dsn(memory_config)
     operations = OperationsRepository(dsn, memory_config)
-    store = build_artifact_store(config.storage_mode, artifact_root=config.artifact_root, s3=config.s3)
+    store = build_artifact_store(config.storage_mode, artifact_root=config.artifact_root, s3=config.s3, aws_s3=config.aws_s3)
     ocr_provider = OcrEngineProvider(config.ocr_provider)
 
     if warm_up_ocr:

@@ -126,7 +126,7 @@ function detailFor(c) {
     review_reasons: ["SUPPLIER_NAME_MISSING"],
     fields: fieldsFor(c).map((f) => ({
       field_name: f.field_name, raw_value: f.value, normalized_value: f.value,
-      value_type: f.field_name === "TOTAL_AMOUNT" ? "DECIMAL" : "TEXT", confidence: 0.9, review_required: false,
+      value_type: f.field_name === "TOTAL_AMOUNT" ? "DECIMAL" : "TEXT", confidence: 90, review_required: false,
       evidence_reference_ids: f.evidence,
     })),
     financial_checks: [{
@@ -213,6 +213,12 @@ function capabilitiesFor(c, actor) {
         { line_number: l.line_number, field_name: "LINE_UNIT_PRICE", current_value: l.unit_price },
       ]),
       evidence_reference_ids: evidenceIds(c),
+      // labelled like the real backend: "Extracted evidence — <Field>" with a short snippet (here naming the id so specs can pick one)
+      evidence_options: evidenceIds(c).map((id) => {
+        const field = fieldsFor(c).find((f) => f.evidence.includes(id));
+        const name = field.field_name.toLowerCase().split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+        return { reference_id: id, evidence_type: "EXTRACTED_FIELD", label: `Extracted evidence \u2014 ${name}, page 1`, page_number: 1, snippet: `token ${id}` };
+      }),
       require_reason: true,
       require_evidence: true,
     },

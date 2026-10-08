@@ -26,6 +26,31 @@ describe("correction targets (task §13)", () => {
   });
 });
 
+describe("a missing header field (M11E.4)", () => {
+  const missingSupplier = { ...policy, header_fields: [{ field_name: "SUPPLIER_NAME" as const, current_value: null }, ...policy.header_fields] };
+  const supplierRow = row({ target: "H:SUPPLIER_NAME", correctedValue: "SuperStore" });
+
+  it("is an editable target listed first-class with its null current value", () => {
+    const target = correctionTargets(missingSupplier).find((item) => item.key === "H:SUPPLIER_NAME");
+    expect(target).toMatchObject({ fieldName: "SUPPLIER_NAME", lineNumber: null, currentValue: null, label: "Supplier Name (header)" });
+  });
+
+  it("validates and is sent with previous_value null, never an invented value", () => {
+    expect(validateCorrections([supplierRow], missingSupplier).valid).toBe(true);
+    expect(rowsToCorrections([supplierRow], missingSupplier)).toEqual([
+      {
+        field_name: "SUPPLIER_NAME", line_number: null, previous_value: null, corrected_value: "SuperStore",
+        reason: "Verified against the PO.", evidence_reference_ids: ["ev-po-1"],
+      },
+    ]);
+  });
+
+  it("is not offered when the backend did not list it", () => {
+    expect(correctionTargets(policy).map((target) => target.key)).not.toContain("H:SUPPLIER_NAME");
+    expect(rowsToCorrections([supplierRow], policy)).toBeNull();
+  });
+});
+
 describe("correction validation", () => {
   it("accepts a valid correction", () => {
     expect(validateCorrections([row()], policy).valid).toBe(true);

@@ -282,7 +282,12 @@ def test_capabilities_for_reviewer_expose_only_advisory_data(api, tenant_id, see
     assert policy["line_numbers"] == [1]
     assert policy["require_reason"] is True and policy["require_evidence"] is True
     headers = {item["field_name"]: item["current_value"] for item in policy["header_fields"]}
-    assert headers == {"PURCHASE_ORDER_NUMBER": "99", "SUPPLIER_NAME": None}
+    # M11E.4: every explicitly configured header field is offered; one never extracted has current_value null.
+    from ap_agent.models.interface import default_interface_config
+
+    assert set(headers) == {field.value for field in default_interface_config().correctable_header_fields}
+    assert headers["PURCHASE_ORDER_NUMBER"] == "99" and headers["SUPPLIER_NAME"] is None
+    assert [item["current_value"] for item in policy["header_fields"] if item["field_name"] not in {"PURCHASE_ORDER_NUMBER"}] == [None] * (len(headers) - 1)
     assert {"line_number": 1, "field_name": "LINE_QUANTITY", "current_value": "5"} in policy["line_values"]
 
     response_text = api.client.get(
@@ -721,7 +726,8 @@ def test_h_command_on_one_case_never_touches_another_case(runtime_dsn, local_con
         (_header_correction(line_number=1), 422, "HEADER_CORRECTION_LINE_NUMBER_PROHIBITED"),
         (_header_correction(previous_value="not-the-stored-value"), 422, "PREVIOUS_VALUE_MISMATCH"),
         (_header_correction(corrected_value="99"), 422, "CORRECTED_VALUE_UNCHANGED"),
-        (_header_correction(field_name="INVOICE_NUMBER", previous_value="x"), 422, "HEADER_FIELD_NOT_PRESENT"),
+        # M11E.4: a missing header may be inserted only with previous_value null; a forged previous value is refused
+        (_header_correction(field_name="INVOICE_NUMBER", previous_value="x"), 422, "PREVIOUS_VALUE_MISMATCH"),
     ],
 )
 def test_i_invalid_corrections_are_rejected_without_mutation(api, db, correction, expected_status, expected_code):

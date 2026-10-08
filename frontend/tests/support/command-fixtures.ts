@@ -28,6 +28,10 @@ export function makeCapabilities(overrides: Partial<CommandCapabilitiesPayload> 
         { line_number: 1, field_name: "LINE_DESCRIPTION", current_value: "Widget" },
       ],
       evidence_reference_ids: ["ev-po-1", "ev-total-1"],
+      evidence_options: [
+        { reference_id: "ev-po-1", evidence_type: "EXTRACTED_FIELD", label: "Extracted evidence — Purchase Order Number, page 1", page_number: 1, snippet: "PO 99" },
+        { reference_id: "ev-total-1", evidence_type: "EXTRACTED_FIELD", label: "Extracted evidence — Total Amount", page_number: null, snippet: null },
+      ],
       require_reason: true,
       require_evidence: true,
     },
