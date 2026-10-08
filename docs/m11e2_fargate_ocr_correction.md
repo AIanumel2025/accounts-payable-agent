@@ -476,7 +476,30 @@ rows unchanged; no early stage reruns), and a frontend component test. Three of 
 
 **Deviations.** None from the notebook; this is hosted-layer behaviour.
 
-## 15. Is it safe to attempt another real pass 1?
+## 15. Final live production acceptance (8 October 2026)
+
+The hosted MVP completed both decisive production paths against the AWS stack in `eu-west-2`:
+
+1. A clean invoice completed automatically through direct upload, private S3 storage, SQS FIFO dispatch, the on-demand Fargate
+   PaddleOCR worker, deterministic extraction/validation and persistence.
+2. Invoice `invoice_Aaron Bergman_36258.pdf` exercised the supervised exception path. The reviewer inserted the missing supplier
+   name with the labelled source-document evidence, requested the first resume, and the workflow correctly restarted at
+   `REFERENCE_MATCHING`. The downstream `INHERITED_FINANCIAL_VALIDATION_REVIEW` case was then approved after the invoice
+   arithmetic was checked. M11E.6 made that later decision independently resumable. The second resume produced a distinct
+   operations job and reached **Completed at 23:33 BST**, with the UI reporting: “Resumed from the recorded restart stage and
+   completed.”
+
+The final production smoke suite was green. The 13 checks on
+`947d8d61debdf196f3671defd784d5ef7c0614f2` also passed, including the real PostgreSQL acceptance, real integration,
+container-image builds, template policy checks and real PaddleOCR benchmark. The database acceptance tests cover the append-only
+original-memory guarantee, distinct resume plans/jobs, idempotent replay and the prohibition on rerunning ingestion,
+preprocessing, OCR or normalization.
+
+This closes the first hosted-MVP acceptance gate. The remaining work is product and enterprise hardening: client-owned reference
+data and integrations, true batch upload, controlled parallel capacity, sustained load tests, custom domain/WAF, formal recovery
+exercises and penetration testing.
+
+## 16. Is it safe to attempt another real pass 1?
 
 Yes, subject to `./preflight.sh` printing "Preflight passed" (no `BLOCK` line) — in particular the Fargate quota and the
 `ROLLBACK_COMPLETE` check — and the stack-only cleanup of the failed stack first. The cheapest rollback is
