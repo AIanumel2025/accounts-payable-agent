@@ -687,7 +687,7 @@ Deployment characteristics:
 - Cost controls: no NAT gateway, load balancer, RDS instance, always-on ECS service or provisioned concurrency.
 - Observability: CloudWatch logs, queue/DLQ inspection, alarms and deployment smoke checks.
 
-Verified live on 7 October 2026:
+Verified live on 7–8 October 2026:
 
 - CloudFormation stack update completed successfully.
 - Every unauthenticated infrastructure/security smoke check passed.
@@ -695,7 +695,9 @@ Verified live on 7 October 2026:
 - The Next.js-to-FastAPI SigV4 request path succeeded.
 - Neon pooled runtime queries succeeded with transaction-local statement and lock timeouts.
 - Dashboard health reported **Backend connected** and **Commands enabled**.
-- The first real uploaded-invoice run remains the final production acceptance check before PR #16 is merged.
+- A clean invoice completed automatically through upload, private storage, queued Fargate OCR, extraction and validation.
+- A review-required invoice accepted an evidence-backed missing-supplier correction, resumed into a legitimate downstream financial review, and completed after a second independently scoped resume at **23:33 BST on 8 October 2026**.
+- PR #16 was merged after all 13 CI checks and the live production acceptance passed.
 
 ## Current limitations
 
@@ -707,7 +709,7 @@ This is a hosted MVP, not yet an enterprise AP platform. Current boundaries incl
 - OCR/extraction quality is validated against controlled fixtures, not yet against a client-specific production evaluation set.
 - The Lambda Function URL is operational but a custom domain, WAF and enterprise edge controls are not yet configured.
 - Disaster-recovery exercises, formal penetration testing, retention-policy sign-off and sustained load testing remain outstanding.
-- The first real hosted invoice still needs to complete the final upload → S3 → queue → Fargate → review/resume acceptance run.
+- Batch upload, parallel OCR capacity and client-specific reference-data integrations remain future product work; the single-invoice automatic and repeated review/resume paths have completed live acceptance.
 
 The system must remain human-supervised and client-configured before it is used for consequential financial operations.
 
@@ -717,7 +719,7 @@ The system must remain human-supervised and client-configured before it is used 
 2. ~~Build the Next.js human-review interface.~~ Done (M11A–M11C).
 3. ~~Add asynchronous upload, worker and workflow-resume operations.~~ Done (M11D).
 4. ~~Add production identity, private object storage and hosted deployment.~~ Done (M11E/M11E.1–M11E.3).
-5. Complete the first real hosted invoice acceptance run and merge PR #16.
+5. ~~Complete the first real hosted invoice acceptance run and merge PR #16.~~ Done (8 October 2026).
 6. Replace sample reference data with supplier, PO, receipt, email and ERP connectors.
 7. Add client-specific evaluation datasets, extraction-quality reporting and acceptance thresholds.
 8. Add custom domain/WAF controls, tracing, operational dashboards and tested recovery procedures.
@@ -792,5 +794,5 @@ Operational documentation:
 - [AWS go-live architecture and security report](docs/m11e1_aws_go_live_report.md)
 - [Fargate OCR and Neon pooled-connection corrections](docs/m11e2_fargate_ocr_correction.md)
 
-PR #16 remains open until the first real invoice completes the live end-to-end
-acceptance path. The public URL exposes no payment-execution capability.
+PR #16 merged after the live end-to-end acceptance path completed successfully.
+The public URL exposes no payment-execution capability.
