@@ -79,6 +79,7 @@ export async function fillCorrection(
   await row.getByLabel("Field to correct").selectOption(options.target);
   await row.getByLabel("Corrected value").fill(options.value);
   await row.getByLabel("Reason for this correction").fill(options.reason ?? "Verified against the source document");
-  if (options.evidence !== "") await row.getByRole("checkbox", { name: new RegExp(options.evidence ?? "ev-po-1") }).check();
+  // Evidence is picked by its human label (M11E.5), never by its opaque id.
+  if (options.evidence !== "") await row.getByRole("checkbox", { name: new RegExp(options.evidence ?? "Purchase Order Number") }).check();
   await page.getByRole("group", { name: "Reason codes" }).getByRole("checkbox", { name: options.reasonCode ?? "Verified against evidence" }).check();
 }

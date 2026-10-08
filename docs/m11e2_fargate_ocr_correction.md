@@ -375,7 +375,80 @@ Then, signed in, open case 36258: *Field to correct* now lists *Supplier Name (h
 required), request resume, and confirm the job restarts at reference matching and the supplier is matched. Confidence values
 read `99.99%` / `100%`.
 
-## 13. Is it safe to attempt another real pass 1?
+## 13. Real hosted finding: opaque evidence UUIDs, nothing to cite for a missing value (M11E.5)
+
+With the supplier correction working (M11E.4), the *Supporting evidence* selector showed only UUIDs. A reviewer could not tell
+which one supported "SuperStore", and because the available evidence came only from already-extracted fields and financial
+checks, the OCR text of a value the extractor never found had nothing to cite at all.
+
+**Fix (smallest safe change).**
+
+* **Case-bound source-document evidence.** Each review case now offers one more evidence reference: the *original source invoice*.
+  Its id is a one-way UUIDv5 of the case's `document_id` and the stored `source_document_sha256`
+  (`ap_agent.models.review_evidence.source_document_evidence_id`). It exists only in that case's available set, so another document,
+  the same document with a different stored hash, another case or another tenant derives or sees a different id and is rejected
+  (`UNKNOWN_EVIDENCE_REFERENCE`) like any forged id. No object-store key, path, host name, credential, tenant id or hash is exposed
+  or derivable from it.
+* **Structured, labelled choices.** `correction_policy.evidence_options` returns, for exactly the ids a correction may cite:
+  `reference_id`, `evidence_type` (`SOURCE_DOCUMENT`, `EXTRACTED_FIELD`, `FINANCIAL_CHECK`), a human `label`, and — when stored — a
+  `page_number` and a control-character-free, 80-character `snippet`. The source option reads
+  **"Original source invoice — SHA-256 verified"**; extracted evidence reads "Extracted evidence — Supplier Name, page 1" with its
+  snippet. `evidence_reference_ids` is kept (validation uses it; options can never widen it).
+* **The command is unchanged.** The frontend sends only `reference_id`s; the append-only decision and audit records contain only
+  those ids, never a label. `require_correction_evidence` is not weakened, free-form identifiers are rejected, and extracted-field
+  evidence stays valid.
+* **Existing live case 36258** gets the option after the `api` (and `web`) redeploy with **no new upload and no data migration**: the
+  id is derived at read time from the stored document id and hash.
+
+What "SHA-256 verified" means: the invoice's SHA-256 is computed by the server when the upload is finalised and stored immutably; the
+evidence id is bound to that stored value. The hash is **not** re-computed from the stored object when a correction is made.
+
+**Deliberately not in this patch (later production hardening):** streaming the original document or a signed-URL preview, so the
+reviewer can look at the invoice from the review page. Today the reviewer works from the paper/PDF they already hold; the option
+is the auditable statement that the correction is supported by that source document.
+
+**Tests:** `tests/unit/test_m11e5_source_evidence.py` (identity, case binding, safe labels/snippets, capabilities, validation of
+forged/cross-document ids), `tests/api/test_m11e5_source_evidence_postgres.py` (real PostgreSQL, API and worker: labelled option in
+the payload, no location/hash/tenant in it, the missing `SUPPLIER_NAME` corrected with the source evidence alone → resume at
+`REFERENCE_MATCHING` → `SuperStore` in the derived record, original memory unchanged, audit/decision hold ids only; forged,
+free-form, other-case, other-hash and other-tenant ids rejected without mutation; tenant isolation; extracted evidence still valid) and
+frontend tests for the parser, the editor labels and the wire format. `check-build-secrets.mjs` also scans built assets for S3 URIs,
+tenant-scoped object keys and bucket hosts.
+
+**M11E.5 results (local, on the final code):**
+
+| Check | Result |
+|---|---|
+| Full backend suite (`pytest -m "not requires_paddle" --ignore=tests/unit/test_paddleocr_adapter.py`, local PostgreSQL 16 with TLS) | **1704 passed**, 31 deselected, 0 failed (461 s) |
+| New unit tests (`test_m11e5_source_evidence.py`) | 32 passed |
+| New real-PostgreSQL tests (`test_m11e5_source_evidence_postgres.py`) | 10 passed; 4 fail against the previous `src/` (the other 6 are rejection guards that hold in both) |
+| Frontend `tsc`, `eslint`, `vitest` | clean; 619 tests passed (51 files); `api:check` OK |
+| Production build + `check-build-secrets` (now also S3 URIs, tenant-scoped keys, bucket hosts) | build OK; 27 static assets scanned, nothing forbidden |
+| Browser: default suite (`test:e2e`, mock backend) | 90 passed |
+| Browser: review actions with the mock backend (`playwright.actions.config.ts`) | 48 passed |
+| Hosted acceptance (`test:e2e:hosted`) | 21/21 database checks, all browser scenarios passed |
+| Real FastAPI + PostgreSQL + Next.js (`test:e2e:integration`) | 8 passed |
+| Real review actions (`test:e2e:real-actions`) | 57 checks passed, 0 failed |
+| Real operations (`test:e2e:real-operations`) | 21/21 database checks |
+
+The end-to-end helpers used to pick evidence by its raw id text; they now pick it by its label (and the mock backend returns labelled
+options), which is the intended behaviour change.
+
+**Image rebuilds:** `api` (capabilities, validation) and `web` (parser and editor). Not needed: `worker` and `migrate`/dispatcher —
+the resume path never validated evidence ids (it only records them) and no migration or schema changed.
+
+```bash
+cd ~/accounts-payable-agent && git pull origin claude/great-bardeen-w8wwlz && cd deploy/aws/scripts
+export AWS_REGION=eu-west-2 CLERK_PUBLISHABLE_KEY='pk_...' CLERK_ISSUER='https://<instance>.clerk.accounts.dev'
+export IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
+./build-and-push.sh api web            # the other recorded images (worker, migrate) are kept
+./preflight.sh && ./deploy.sh pass2 && ./smoke.sh
+```
+
+Then open case 36258: *Supporting evidence* lists "Original source invoice — SHA-256 verified" first; tick it, correct *Supplier
+Name*, and request resume as before.
+
+## 14. Is it safe to attempt another real pass 1?
 
 Yes, subject to `./preflight.sh` printing "Preflight passed" (no `BLOCK` line) — in particular the Fargate quota and the
 `ROLLBACK_COMPLETE` check — and the stack-only cleanup of the failed stack first. The cheapest rollback is

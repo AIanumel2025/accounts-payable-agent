@@ -50,6 +50,7 @@ export type HumanReviewDispositionValue = components["schemas"]["HumanReviewDisp
 export type CommandCapabilitiesPayload = components["schemas"]["CommandCapabilitiesResponse"];
 export type AvailableActionPayload = components["schemas"]["AvailableAction"];
 export type CorrectionPolicyPayload = components["schemas"]["CorrectionPolicyResponse"];
+export type EvidenceOptionPayload = components["schemas"]["EvidenceOptionResponse"];
 export type ResumeCapabilityPayload = components["schemas"]["ResumeCapabilityResponse"];
 export type CorrectableHeaderFieldPayload = components["schemas"]["CorrectableHeaderField"];
 export type CorrectableLineValuePayload = components["schemas"]["CorrectableLineValue"];

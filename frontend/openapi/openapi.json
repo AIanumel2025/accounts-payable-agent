@@ -926,6 +926,13 @@
       "CorrectionPolicyResponse": {
         "additionalProperties": false,
         "properties": {
+          "evidence_options": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceOptionResponse"
+            },
+            "title": "Evidence Options",
+            "type": "array"
+          },
           "evidence_reference_ids": {
             "items": {
               "type": "string"
@@ -976,6 +983,7 @@
           "line_numbers",
           "line_values",
           "evidence_reference_ids",
+          "evidence_options",
           "require_reason",
           "require_evidence"
         ],
@@ -1044,6 +1052,58 @@
           "review_reason_counts"
         ],
         "title": "DashboardResponse",
+        "type": "object"
+      },
+      "EvidenceOptionResponse": {
+        "additionalProperties": false,
+        "description": "One evidence choice a correction may cite (M11E.5). Only `reference_id` is ever sent back in a command; the rest is\ndisplay metadata. Carries no object-store key, path, host name, credential or tenant identifier.",
+        "properties": {
+          "evidence_type": {
+            "enum": [
+              "SOURCE_DOCUMENT",
+              "EXTRACTED_FIELD",
+              "FINANCIAL_CHECK"
+            ],
+            "title": "Evidence Type",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "reference_id": {
+            "title": "Reference Id",
+            "type": "string"
+          },
+          "snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snippet"
+          }
+        },
+        "required": [
+          "reference_id",
+          "evidence_type",
+          "label"
+        ],
+        "title": "EvidenceOptionResponse",
         "type": "object"
       },
       "FinancialCheckResponse": {

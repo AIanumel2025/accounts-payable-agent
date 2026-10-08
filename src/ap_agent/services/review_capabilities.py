@@ -31,6 +31,7 @@ from ap_agent.models.interface import (
     interface_permissions_for_role,
 )
 from ap_agent.models.normalization import InvoiceFieldName
+from ap_agent.models.review_evidence import EVIDENCE_TYPE_SOURCE_DOCUMENT, generic_evidence_option
 from ap_agent.services.review_commands import (
     ACTIONS_REQUIRING_NOTES,
     ACTIONS_REQUIRING_REASON_CODES,
@@ -163,6 +164,29 @@ def _resume_capability(
     }
 
 
+def _evidence_options(context: ReviewCommandContext) -> tuple[dict[str, Any], ...]:
+    """Safe structured descriptions of exactly the evidence ids a correction may cite (`available_evidence_reference_ids`).
+
+    The source-document option (case-bound, M11E.5) comes first. An id without a stored description is still offered, with a
+    generic label; an option whose id is not in the available set is never offered (options cannot widen what is accepted)."""
+
+    described = {option.reference_id: option for option in context.evidence_options}
+    available = list(context.available_evidence_reference_ids)
+    ordered = [i for i in available if described.get(i) is not None and described[i].evidence_type == EVIDENCE_TYPE_SOURCE_DOCUMENT]
+    ordered += [i for i in available if i not in ordered]
+
+    return tuple(
+        {
+            "reference_id": reference_id,
+            "evidence_type": (option := described.get(reference_id) or generic_evidence_option(reference_id)).evidence_type,
+            "label": option.label,
+            "page_number": option.page_number,
+            "snippet": option.snippet,
+        }
+        for reference_id in ordered
+    )
+
+
 def build_command_capabilities(
     *,
     actor: InterfaceActor,
@@ -241,6 +265,7 @@ def build_command_capabilities(
             "line_numbers": context.known_invoice_line_numbers,
             "line_values": line_values,
             "evidence_reference_ids": context.available_evidence_reference_ids,
+            "evidence_options": _evidence_options(context),
             "require_reason": config.require_correction_reason,
             "require_evidence": config.require_correction_evidence,
         },

@@ -614,6 +614,8 @@ export interface components {
         };
         /** CorrectionPolicyResponse */
         CorrectionPolicyResponse: {
+            /** Evidence Options */
+            evidence_options: components["schemas"]["EvidenceOptionResponse"][];
             /** Evidence Reference Ids */
             evidence_reference_ids: string[];
             /** Header Fields */
@@ -657,6 +659,26 @@ export interface components {
             total_invoices: number;
             /** Unassigned Review Cases */
             unassigned_review_cases: number;
+        };
+        /**
+         * EvidenceOptionResponse
+         * @description One evidence choice a correction may cite (M11E.5). Only `reference_id` is ever sent back in a command; the rest is
+         *     display metadata. Carries no object-store key, path, host name, credential or tenant identifier.
+         */
+        EvidenceOptionResponse: {
+            /**
+             * Evidence Type
+             * @enum {string}
+             */
+            evidence_type: "SOURCE_DOCUMENT" | "EXTRACTED_FIELD" | "FINANCIAL_CHECK";
+            /** Label */
+            label: string;
+            /** Page Number */
+            page_number?: number | null;
+            /** Reference Id */
+            reference_id: string;
+            /** Snippet */
+            snippet?: string | null;
         };
         /** FinancialCheckResponse */
         FinancialCheckResponse: {

@@ -57,6 +57,12 @@ from uuid import UUID
 
 from ap_agent.config.postgres import MemoryConfig
 from ap_agent.db.connection import open_connection, set_tenant_context
+from ap_agent.models.review_evidence import (
+    ReviewEvidenceOption,
+    field_evidence_option,
+    financial_check_evidence_option,
+    source_document_evidence_option,
+)
 from ap_agent.exceptions import ReviewCaseNotFoundError, ReviewIntegrityError
 from ap_agent.models.interface import (
     DashboardRecord,
@@ -381,7 +387,7 @@ def _project_review_decision(
 def _parse_command_context_payloads(
     normalized_payload: Any,
     financial_payload: Any,
-) -> tuple[tuple[tuple[InvoiceFieldName, Optional[str]], ...], tuple[int, ...], set[str]]:
+) -> tuple[tuple[tuple[InvoiceFieldName, Optional[str]], ...], tuple[int, ...], set[str], tuple[ReviewEvidenceOption, ...]]:
     """Shared parsing behind `lock_assignment_context`/`lock_decision_context`
     (notebook cells 105/106's identical inline blocks)."""
 
@@ -411,6 +417,7 @@ def _parse_command_context_payloads(
 
     header_field_values = []
     evidence_reference_ids: set[str] = set()
+    evidence_options: dict[str, ReviewEvidenceOption] = {}
 
     for field_payload in field_payloads:
         if not isinstance(field_payload, dict):
@@ -431,6 +438,15 @@ def _parse_command_context_payloads(
 
             if reference_id is not None:
                 evidence_reference_ids.add(str(reference_id))
+                evidence_options.setdefault(
+                    str(reference_id),
+                    field_evidence_option(
+                        str(reference_id),
+                        field_name=str(field_payload["field_name"]),
+                        page_number=evidence_payload.get("page_number"),
+                        raw_text=evidence_payload.get("raw_text"),
+                    ),
+                )
 
     for check_payload in check_payloads:
         if not isinstance(check_payload, dict):
@@ -442,6 +458,7 @@ def _parse_command_context_payloads(
 
             for reference_id in operand_payload.get("evidence_reference_ids", []):
                 evidence_reference_ids.add(str(reference_id))
+                evidence_options.setdefault(str(reference_id), financial_check_evidence_option(str(reference_id)))
 
     known_line_numbers = tuple(
         sorted(
@@ -453,7 +470,9 @@ def _parse_command_context_payloads(
         )
     )
 
-    return tuple(header_field_values), known_line_numbers, evidence_reference_ids
+    ordered_options = tuple(evidence_options[reference_id] for reference_id in sorted(evidence_options))
+
+    return tuple(header_field_values), known_line_numbers, evidence_reference_ids, ordered_options
 
 
 class ReviewRepository:
@@ -1207,7 +1226,8 @@ class ReviewRepository:
                 review.review_id, review.review_status, review.resolution_code, review.assigned_to,
                 workflow.lock_version, invoice.normalized_invoice, invoice.financial_validation,
                 (SELECT COUNT(*) FROM ap_agent.review_decisions AS decision
-                 WHERE decision.tenant_id = review.tenant_id AND decision.review_id = review.review_id) AS decision_count
+                 WHERE decision.tenant_id = review.tenant_id AND decision.review_id = review.review_id) AS decision_count,
+                workflow.source_document_sha256
             FROM ap_agent.review_cases AS review
             JOIN ap_agent.workflow_instances AS workflow
                 ON workflow.tenant_id = review.tenant_id AND workflow.workflow_id = review.workflow_id
@@ -1239,7 +1259,8 @@ class ReviewRepository:
                 review.review_id, review.review_status, {resolution_select} review.assigned_to,
                 workflow.lock_version, invoice.normalized_invoice, invoice.financial_validation,
                 (SELECT COUNT(*) FROM ap_agent.review_decisions AS decision
-                 WHERE decision.tenant_id = review.tenant_id AND decision.review_id = review.review_id) AS decision_count
+                 WHERE decision.tenant_id = review.tenant_id AND decision.review_id = review.review_id) AS decision_count,
+                workflow.source_document_sha256
             FROM ap_agent.review_cases AS review
             JOIN ap_agent.workflow_instances AS workflow
                 ON workflow.tenant_id = review.tenant_id AND workflow.workflow_id = review.workflow_id
@@ -1277,11 +1298,21 @@ class ReviewRepository:
             normalized_payload,
             financial_payload,
             decision_count,
+            source_document_sha256,
         ) = row
 
-        header_field_values, known_line_numbers, evidence_reference_ids = _parse_command_context_payloads(
+        header_field_values, known_line_numbers, evidence_reference_ids, evidence_options = _parse_command_context_payloads(
             normalized_payload, financial_payload
         )
+
+        # M11E.5: the case-bound source-document evidence, derived from THIS case's document and its stored SHA-256 only.
+        source_option = source_document_evidence_option(document_id, str(source_document_sha256).strip())
+
+        if source_option is not None:
+            evidence_reference_ids.add(source_option.reference_id)
+            evidence_options = (source_option,) + tuple(
+                option for option in evidence_options if option.reference_id != source_option.reference_id
+            )
 
         case_status = (
             command_case_status_from_database(stored_review_status, resolution_code)
@@ -1302,6 +1333,7 @@ class ReviewRepository:
             header_field_values=header_field_values,
             known_invoice_line_numbers=known_line_numbers,
             available_evidence_reference_ids=tuple(sorted(evidence_reference_ids)),
+            evidence_options=tuple(evidence_options),
         )
 
     # ------------------------------------------------------------

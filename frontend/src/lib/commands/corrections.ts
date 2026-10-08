@@ -80,7 +80,7 @@ export interface CorrectionValidation {
 
 export function validateCorrections(rows: readonly CorrectionRow[], policy: CorrectionPolicyPayload): CorrectionValidation {
   const targets = new Map(correctionTargets(policy).map((target) => [target.key, target]));
-  const allowedEvidence = new Set(policy.evidence_reference_ids);
+  const allowedEvidence = new Set(policy.evidence_options.map((option) => option.reference_id));
   const rowErrors: Record<string, RowErrors> = {};
   const formErrors: string[] = [];
   const seen = new Set<string>();

@@ -267,6 +267,12 @@ value. Rebuild and redeploy `api` (and `worker` for the resume path); nothing ne
 correctable. Confidence shown as `9999%` means the `web` image predates the M11E.4 formatter fix. Steps:
 `docs/m11e2_fargate_ocr_correction.md` §12.
 
+### Troubleshooting: *Supporting evidence* shows only UUIDs / no way to cite a missing value
+
+Images older than M11E.5 list opaque evidence ids only. Rebuild and redeploy `api` and `web` (`./build-and-push.sh api web`, then
+`./deploy.sh pass2`); existing cases get the labelled *Original source invoice — SHA-256 verified* option without re-uploading.
+Details: `docs/m11e2_fargate_ocr_correction.md` §13.
+
 ### Troubleshooting the Fargate path
 
 | Symptom | Look at | Typical cause |

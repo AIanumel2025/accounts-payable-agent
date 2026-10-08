@@ -79,6 +79,7 @@ __all__ = [
     "AvailableAction",
     "ResumeCapabilityResponse",
     "CommandCapabilitiesResponse",
+    "EvidenceOptionResponse",
     "JobSummaryResponse",
     "JobResponse",
     "JobEventResponse",
@@ -576,12 +577,24 @@ class CorrectableLineValue(_StrictModel):
     current_value: Optional[str]
 
 
+class EvidenceOptionResponse(_StrictModel):
+    """One evidence choice a correction may cite (M11E.5). Only `reference_id` is ever sent back in a command; the rest is
+    display metadata. Carries no object-store key, path, host name, credential or tenant identifier."""
+
+    reference_id: str
+    evidence_type: Literal["SOURCE_DOCUMENT", "EXTRACTED_FIELD", "FINANCIAL_CHECK"]
+    label: str
+    page_number: Optional[int] = None
+    snippet: Optional[str] = None
+
+
 class CorrectionPolicyResponse(_StrictModel):
     header_fields: tuple[CorrectableHeaderField, ...]
     line_fields: tuple[InvoiceFieldName, ...]
     line_numbers: tuple[int, ...]
     line_values: tuple[CorrectableLineValue, ...]
     evidence_reference_ids: tuple[str, ...]
+    evidence_options: tuple[EvidenceOptionResponse, ...]
     require_reason: bool
     require_evidence: bool
 

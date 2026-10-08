@@ -56,6 +56,10 @@ const FORBIDDEN_PATTERNS = [
   { name: "private Lambda Function URL", pattern: /[a-z0-9]{20,}\.lambda-url\.[a-z0-9-]+\.on\.aws/ },
   { name: "SQS queue URL", pattern: /sqs\.[a-z0-9-]+\.amazonaws\.com\/\d{12}\// },
   { name: "development actor id (M11C acceptance/demo)", pattern: /real-reviewer-[ab]|demo-reviewer/ },
+  // M11E.5: source-document evidence is an opaque derived id with a fixed label; no object-store location may reach a bundle.
+  { name: "S3 URI", pattern: /s3:\/\/[a-z0-9][a-z0-9.-]{2,}/i },
+  { name: "tenant-scoped object-store key", pattern: /tenants\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\// },
+  { name: "S3 bucket host", pattern: /[a-z0-9.-]+\.s3[.-][a-z0-9-]*\.?amazonaws\.com/ },
 ];
 
 function walk(dir) {
