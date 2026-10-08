@@ -498,6 +498,10 @@ class ReviewCommandContext:
     # M11E.5: structured, safe descriptions of the selectable evidence (labels shown to the reviewer). Validation uses only
     # `available_evidence_reference_ids`; options never widen it.
     evidence_options: tuple[ReviewEvidenceOption, ...] = ()
+    # M11E.6: ids of THIS case's decisions for which a workflow resume was already requested (durable, server-side: derived from
+    # the append-only `WORKFLOW_RESUME_REQUESTED` audit events). A resume requested for an earlier review case of the same
+    # workflow never appears here, so it cannot make a later case ineligible; nor can another case's, workflow's or tenant's.
+    resume_requested_decision_ids: tuple[str, ...] = ()
 
 
 # ------------------------------------------------------------

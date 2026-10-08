@@ -435,6 +435,17 @@ describe("workflow resume panel (task §15)", () => {
     });
   });
 
+  it("M11E.6: a second review case's own decision shows the panel (an earlier case's resume does not hide it)", async () => {
+    // The server scopes `already_requested` to this case's decision; the payload for a downstream case therefore reads eligible.
+    const { submit } = setup(resumeCapabilities("APPROVED", {
+      resume: { eligible: true, already_requested: false, disposition: "APPROVED", decision_id: "99999999-9999-4999-8999-999999999999", ineligible_reason: null },
+    }));
+    const panel = screen.getByTestId("resume-panel");
+    await userEvent.click(within(panel).getByRole("button", { name: /request workflow resume/i }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    expect(lastRequest(submit)).toMatchObject({ action: "RESUME_WORKFLOW", disposition: "APPROVED" });
+  });
+
   it("submits the stored CORRECTED disposition", async () => {
     const { submit } = setup(resumeCapabilities("CORRECTED"));
     await userEvent.click(screen.getByRole("button", { name: /request workflow resume/i }));

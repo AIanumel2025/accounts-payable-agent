@@ -273,6 +273,12 @@ Images older than M11E.5 list opaque evidence ids only. Rebuild and redeploy `ap
 `./deploy.sh pass2`); existing cases get the labelled *Original source invoice — SHA-256 verified* option without re-uploading.
 Details: `docs/m11e2_fargate_ocr_correction.md` §13.
 
+### Troubleshooting: an approved *second* review case shows no *Workflow resume* panel
+
+Fixed in M11E.6 (older builds treated any earlier resume in the workflow as "already requested"). Rebuild and redeploy the `api`
+image only (`./build-and-push.sh api`, then `./preflight.sh && ./deploy.sh pass2 && ./smoke.sh`) and reopen the case: no re-upload
+or re-approval is needed.
+
 ### Troubleshooting the Fargate path
 
 | Symptom | Look at | Typical cause |

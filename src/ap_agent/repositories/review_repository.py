@@ -1227,7 +1227,18 @@ class ReviewRepository:
                 workflow.lock_version, invoice.normalized_invoice, invoice.financial_validation,
                 (SELECT COUNT(*) FROM ap_agent.review_decisions AS decision
                  WHERE decision.tenant_id = review.tenant_id AND decision.review_id = review.review_id) AS decision_count,
-                workflow.source_document_sha256
+                workflow.source_document_sha256,
+                ARRAY(
+                    SELECT decision.decision_id::text
+                    FROM ap_agent.review_decisions AS decision
+                    WHERE decision.tenant_id = review.tenant_id AND decision.review_id = review.review_id
+                      AND EXISTS (
+                          SELECT 1 FROM ap_agent.audit_events AS resume_event
+                          WHERE resume_event.tenant_id = decision.tenant_id AND resume_event.workflow_id = review.workflow_id
+                            AND resume_event.event_type = 'WORKFLOW_RESUME_REQUESTED'
+                            AND resume_event.payload ->> 'decision_id' = decision.decision_id::text
+                      )
+                ) AS resume_requested_decision_ids
             FROM ap_agent.review_cases AS review
             JOIN ap_agent.workflow_instances AS workflow
                 ON workflow.tenant_id = review.tenant_id AND workflow.workflow_id = review.workflow_id
@@ -1260,7 +1271,18 @@ class ReviewRepository:
                 workflow.lock_version, invoice.normalized_invoice, invoice.financial_validation,
                 (SELECT COUNT(*) FROM ap_agent.review_decisions AS decision
                  WHERE decision.tenant_id = review.tenant_id AND decision.review_id = review.review_id) AS decision_count,
-                workflow.source_document_sha256
+                workflow.source_document_sha256,
+                ARRAY(
+                    SELECT decision.decision_id::text
+                    FROM ap_agent.review_decisions AS decision
+                    WHERE decision.tenant_id = review.tenant_id AND decision.review_id = review.review_id
+                      AND EXISTS (
+                          SELECT 1 FROM ap_agent.audit_events AS resume_event
+                          WHERE resume_event.tenant_id = decision.tenant_id AND resume_event.workflow_id = review.workflow_id
+                            AND resume_event.event_type = 'WORKFLOW_RESUME_REQUESTED'
+                            AND resume_event.payload ->> 'decision_id' = decision.decision_id::text
+                      )
+                ) AS resume_requested_decision_ids
             FROM ap_agent.review_cases AS review
             JOIN ap_agent.workflow_instances AS workflow
                 ON workflow.tenant_id = review.tenant_id AND workflow.workflow_id = review.workflow_id
@@ -1299,6 +1321,7 @@ class ReviewRepository:
             financial_payload,
             decision_count,
             source_document_sha256,
+            resume_requested_decision_ids,
         ) = row
 
         header_field_values, known_line_numbers, evidence_reference_ids, evidence_options = _parse_command_context_payloads(
@@ -1334,6 +1357,7 @@ class ReviewRepository:
             known_invoice_line_numbers=known_line_numbers,
             available_evidence_reference_ids=tuple(sorted(evidence_reference_ids)),
             evidence_options=tuple(evidence_options),
+            resume_requested_decision_ids=tuple(sorted(str(value) for value in (resume_requested_decision_ids or ()))),
         )
 
     # ------------------------------------------------------------

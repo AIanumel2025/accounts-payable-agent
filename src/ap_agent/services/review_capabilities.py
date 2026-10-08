@@ -136,7 +136,10 @@ def _resume_capability(
 ) -> dict[str, Any]:
     decisions = detail.review_decisions
     latest = decisions[-1] if decisions else None
-    already_requested = any(event.event_type == RESUME_REQUESTED_EVENT_TYPE for event in detail.timeline)
+    # M11E.6: "already requested" belongs to the CURRENT decision of the CURRENT review case. The workflow timeline is not
+    # consulted: a resume requested for an earlier review case of the same workflow (a downstream case is opened when the
+    # resumed stages still need review) must not make this case permanently ineligible.
+    already_requested = latest is not None and str(latest.decision_id) in context.resume_requested_decision_ids
 
     reason: Optional[str] = None
 

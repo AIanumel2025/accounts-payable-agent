@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -137,11 +138,9 @@ def test_resume_requires_the_deciding_reviewer_and_is_one_shot():
     other = _caps(actor=_actor(actor_id="rev-2"), context=context, detail=_detail([decision]))
     assert other["resume"]["ineligible_reason"] == "DECISION_ACTOR_MISMATCH"
 
-    requested = InterfaceTimelineEvent(
-        event_id="e", event_type="WORKFLOW_RESUME_REQUESTED", stage=None, status="IN_PROGRESS",
-        actor_id="rev-1", message="m", occurred_at=NOW,
-    )
-    done = _caps(context=context, detail=_detail([decision], [requested]))
+    # M11E.6: one-shot per DECISION -- the durable association is the decision id carried by the context.
+    requested = replace(context, resume_requested_decision_ids=(str(decision.decision_id),))
+    done = _caps(context=requested, detail=_detail([decision]))
     assert done["resume"]["already_requested"] is True
     assert done["resume"]["ineligible_reason"] == "RESUME_ALREADY_REQUESTED"
 

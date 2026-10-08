@@ -448,7 +448,35 @@ export IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
 Then open case 36258: *Supporting evidence* lists "Original source invoice — SHA-256 verified" first; tick it, correct *Supplier
 Name*, and request resume as before.
 
-## 14. Is it safe to attempt another real pass 1?
+## 14. Real hosted finding: a downstream review case could never be resumed (M11E.6)
+
+**Symptom.** Case A was corrected and resumed; the resumed stages opened a downstream Case B
+(`INHERITED_FINANCIAL_VALIDATION_REVIEW`); Case B was claimed and approved, yet no *Workflow resume* control appeared.
+
+**Root cause.** `_resume_capability` set `already_requested` when *any* `WORKFLOW_RESUME_REQUESTED` event existed in the
+workflow timeline, so the first case's resume made every later case of the same workflow permanently ineligible. Only the
+advisory capability was wrong; the server-side guards (`advance_workflow_phase`, idempotency fingerprint) were already correct.
+
+**Fix.** "Already requested" is now scoped to the current case's latest decision. The repository computes, per review case,
+`resume_requested_decision_ids` = the ids of *that case's* decisions for which a `WORKFLOW_RESUME_REQUESTED` event exists in the
+same tenant and workflow with a matching audit `payload.decision_id`. The set is carried on `ReviewCommandContext` and compared
+with the latest decision id. No schema change, no new column, nothing new exposed to the frontend (the capability payload is
+unchanged). The timeline is no longer consulted. Resumes of another case, workflow or tenant cannot grant or block eligibility;
+the sibling guards (a decision by the same reviewer, one-shot per decision, 409 on a duplicate, idempotent replay) are unchanged.
+
+**Live case.** Case `69171219-9dde-5099-9c9f-68b9636656d8` is already APPROVED, so after redeploying the `api` image it reports
+`resume.eligible = true` with no re-upload and no re-approval.
+
+**Tests.** `tests/unit/test_m11e6_resume_scope.py` (6), `tests/api/test_m11e6_repeated_resume_postgres.py` (4, real PostgreSQL:
+correction -> resume -> downstream case -> approval -> second resume -> COMPLETED; same-case duplicate and idempotent replay
+create no plan/job; cross-workflow/cross-tenant isolation; distinct plan/job ids; original memory and earlier decisions/audit
+rows unchanged; no early stage reruns), and a frontend component test. Three of the four PostgreSQL tests fail against the old guard.
+
+**Image impact.** Only the `api` image changes (worker/migrate/OCR images are unaffected: no worker, schema or migration change).
+
+**Deviations.** None from the notebook; this is hosted-layer behaviour.
+
+## 15. Is it safe to attempt another real pass 1?
 
 Yes, subject to `./preflight.sh` printing "Preflight passed" (no `BLOCK` line) — in particular the Fargate quota and the
 `ROLLBACK_COMPLETE` check — and the stack-only cleanup of the failed stack first. The cheapest rollback is
